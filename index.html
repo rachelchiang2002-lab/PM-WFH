@@ -4,8 +4,8 @@
 <!-- ===== 設定區:把下面這行換成你在 LINE Developers Console 拿到的 LIFF ID ===== -->
 <script>
   const LIFF_ID = "2011478484-krfYEfBj"; // 例如 "1234567890-AbCdEfGh"
-  const JSONBIN_ID = "6a9e5f2aac6210605aae674e";       // 在 jsonbin.io 建立 bin 後拿到
-  const JSONBIN_KEY = "$2a$10$2AYC7zL8.y80RhWQ4FNTH.q9b8XW25wLI6xitCeOy3kw8cyjJ4UNC"; // jsonbin.io 帳號的 X-Master-Key
+  const JSONBIN_ID =  "6a9e5f2aac6210605aae674e";       // 在 jsonbin.io 建立 bin 後拿到
+  const JSONBIN_KEY = ""$2a$10$2AYC7zL8.y80RhWQ4FNTH.q9b8XW25wLI6xitCeOy3kw8cyjJ4UNC"; // jsonbin.io 帳號的 X-Master-Key（先用這個確保能正常運作）
 </script>
 <!-- ========================================================================= -->
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -174,6 +174,8 @@ let state = {
   newUserInput: "",
   leaveStart: "",
   leaveEnd: "",
+  leaveStartTime: "",
+  leaveEndTime: "",
   businessStart: "",
   businessEnd: "",
   adhocDate: "",
@@ -289,12 +291,20 @@ async function saveAll() {
 function getStatus(id, dateStr, weekday, dateObj) {
   const d = state.memberData[id];
   if (!d) return null;
-  if (d.overrides && d.overrides[dateStr]) {
+  if (d.overrides && d.overrides[dateStr] !== undefined) {
     const v = d.overrides[dateStr];
-    return v === "office" ? null : v;
+    const status = typeof v === "object" ? v.status : v;
+    return status === "office" ? null : status;
   }
   const qKey = quarterKey(dateObj);
   if (d.quarterlyWFH && d.quarterlyWFH[qKey] && d.quarterlyWFH[qKey].includes(weekday)) return "wfh";
+  return null;
+}
+
+function getOverrideTime(id, dateStr) {
+  const d = state.memberData[id];
+  const v = d && d.overrides && d.overrides[dateStr];
+  if (v && typeof v === "object" && v.time) return v.time;
   return null;
 }
 
@@ -351,19 +361,20 @@ async function addManualMember(name) {
   render();
 }
 
-async function addLeaveRange(id, startStr, endStr) {
+async function addLeaveRange(id, startStr, endStr, startTime, endTime) {
   if (!startStr) return;
   const end = endStr || startStr;
   const d = state.memberData[id];
+  const timeLabel = (startTime && endTime) ? `${startTime}-${endTime}` : null;
   let cur = new Date(startStr + "T00:00:00");
   const last = new Date(end + "T00:00:00");
   if (cur > last) return;
   while (cur <= last) {
-    d.overrides[fmtDate(cur)] = "leave";
+    d.overrides[fmtDate(cur)] = timeLabel ? { status: "leave", time: timeLabel } : "leave";
     cur.setDate(cur.getDate() + 1);
   }
   await saveAll();
-  state.leaveStart = ""; state.leaveEnd = "";
+  state.leaveStart = ""; state.leaveEnd = ""; state.leaveStartTime = ""; state.leaveEndTime = "";
   render();
 }
 
@@ -407,7 +418,7 @@ function upcomingEntries(id, daysAhead) {
     dt.setDate(start.getDate() + i);
     const dateStr = fmtDate(dt);
     const status = getStatus(id, dateStr, dt.getDay(), dt);
-    if (status) results.push({ date: dateStr, status });
+    if (status) results.push({ date: dateStr, status, time: getOverrideTime(id, dateStr) });
   }
   return results;
 }
@@ -475,7 +486,7 @@ function renderTodayCard() {
         : rows.map(r => `
           <div class="detail-row">
             <span class="status-dot ${r.status}"></span>
-            <span>${r.name}${statusLabel(r.status)}</span>
+            <span>${r.name}${statusLabel(r.status)}${getOverrideTime(r.id, dateStr) ? `（${getOverrideTime(r.id, dateStr)}）` : ''}</span>
             ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
           </div>`).join("")}
       ${state.members.length === 0 ? '<div class="hint" style="margin-top:10px;">目前還沒有人登記，請到「我的設定」設定居家日。</div>' : ''}
@@ -562,7 +573,7 @@ function renderDayDetail(dateStr) {
         : rows.map(r => `
           <div class="detail-row">
             <span class="status-dot ${r.status}"></span>
-            <span>${r.name}${statusLabel(r.status)}</span>
+            <span>${r.name}${statusLabel(r.status)}${getOverrideTime(r.id, dateStr) ? `（${getOverrideTime(r.id, dateStr)}）` : ''}</span>
             ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
           </div>`).join("")}
     </div>
@@ -677,7 +688,7 @@ function renderMemberSettings(id) {
         ${[1, 2, 3, 4].map(q => `<button class="q-toggle ${q === quarter ? 'on' : ''}" data-quarter="${q}">Q${q}</button>`).join("")}
       </div>
       <div class="wd-toggle-row" style="margin-top:12px;">
-        ${WD_JS_ORDER.map((jsWd, idx) => `
+        ${[1, 2, 3, 4, 5].map((jsWd, idx) => `
           <button class="wd-toggle ${selectedDays.includes(jsWd) ? 'on' : ''}" data-wd="${jsWd}">${WD_LABELS[idx]}</button>
         `).join("")}
       </div>
@@ -708,8 +719,18 @@ function renderMemberSettings(id) {
           <label class="field-label">結束日期（單日可留空）</label>
           <input type="date" id="leave-end" value="${state.leaveEnd}" />
         </div>
-        <button class="btn leave-btn" id="add-leave-btn">新增休假</button>
       </div>
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label class="field-label">開始時間（半天假可留空）</label>
+          <input type="time" id="leave-start-time" value="${state.leaveStartTime}" />
+        </div>
+        <div>
+          <label class="field-label">結束時間</label>
+          <input type="time" id="leave-end-time" value="${state.leaveEndTime}" />
+        </div>
+      </div>
+      <button class="btn leave-btn" id="add-leave-btn" style="margin-top:10px;">新增休假</button>
     </div>
 
     <div class="card">
@@ -747,7 +768,7 @@ function renderMemberSettings(id) {
         : `<div class="override-list">
             ${upcoming.map(u => `
               <div class="override-item">
-                <span>${u.date}　${statusLabel(u.status)}</span>
+                <span>${u.date}　${statusLabel(u.status)}${u.time ? `（${u.time}）` : ''}</span>
                 <button class="btn danger" data-cancel-date="${u.date}">取消</button>
               </div>
             `).join("")}
@@ -841,9 +862,15 @@ function bindEvents() {
   const leaveEnd = document.getElementById("leave-end");
   if (leaveStart) leaveStart.oninput = (e) => { state.leaveStart = e.target.value; };
   if (leaveEnd) leaveEnd.oninput = (e) => { state.leaveEnd = e.target.value; };
+  const leaveStartTime = document.getElementById("leave-start-time");
+  const leaveEndTime = document.getElementById("leave-end-time");
+  if (leaveStartTime) leaveStartTime.oninput = (e) => { state.leaveStartTime = e.target.value; };
+  if (leaveEndTime) leaveEndTime.oninput = (e) => { state.leaveEndTime = e.target.value; };
   const addLeaveBtn = document.getElementById("add-leave-btn");
   if (addLeaveBtn) {
-    addLeaveBtn.onclick = async () => { await addLeaveRange(state.currentUserId, state.leaveStart, state.leaveEnd); };
+    addLeaveBtn.onclick = async () => {
+      await addLeaveRange(state.currentUserId, state.leaveStart, state.leaveEnd, state.leaveStartTime, state.leaveEndTime);
+    };
   }
 
   const businessStart = document.getElementById("business-start");
