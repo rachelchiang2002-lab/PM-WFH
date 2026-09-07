@@ -638,6 +638,8 @@ async function removeMember(id) {
   }
   render();
 }
+
+function renderMemberSettings(id) {
   const d = state.memberData[id];
   const year = state.settingsYear;
   const quarter = state.settingsQuarter;
