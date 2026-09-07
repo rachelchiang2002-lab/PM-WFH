@@ -5,7 +5,7 @@
 <script>
   const LIFF_ID = "2011478484-krfYEfBj"; // 例如 "1234567890-AbCdEfGh"
   const JSONBIN_ID = "6a9e5f2aac6210605aae674e";       // 在 jsonbin.io 建立 bin 後拿到
-  const JSONBIN_KEY = "$2a$10$2AYC7zL8.y80RhWQ4FNTH.q9b8XW25wLI6xitCeOy3kw8cyjJ4UNC"; // jsonbin.io 帳號的 X-Master-Key
+  const JSONBIN_KEY = "$2a$10$1aK.CpPWAFqv/mzR9laL6Oh1exm4Ql9h4jcsSnN5Bfpp9mKIa10eW"; // 範圍受限的 Access Key（不是 X-Master-Key，只給讀取+更新權限）
 </script>
 <!-- ========================================================================= -->
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -253,7 +253,7 @@ async function loadAll() {
 
 async function loadRemoteData() {
   const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}/latest`, {
-    headers: { "X-Master-Key": JSONBIN_KEY }
+    headers: { "X-Access-Key": JSONBIN_KEY }
   });
   if (!res.ok) throw new Error("jsonbin load failed: " + res.status);
   const json = await res.json();
@@ -264,7 +264,7 @@ async function saveAll() {
   try {
     await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}`, {
       method: "PUT",
-      headers: { "X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json" },
+      headers: { "X-Access-Key": JSONBIN_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({ members: state.members, memberData: state.memberData })
     });
   } catch (e) {
