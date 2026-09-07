@@ -3,7 +3,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <!-- ===== 設定區:把下面這行換成你在 LINE Developers Console 拿到的 LIFF ID ===== -->
 <script>
-  const LIFF_ID = "2011478484-krfYEfBj"; // 例如 "1234567890-AbCdEfGh"
+  const LIFF_ID = "YOUR_LIFF_ID_HERE"; // 例如 "1234567890-AbCdEfGh"
+  const JSONBIN_ID = "6a9e5f2aac6210605aae674e";       // 在 jsonbin.io 建立 bin 後拿到
+  const JSONBIN_KEY = "$2a$10$2AYC7zL8.y80RhWQ4FNTH.q9b8XW25wLI6xitCeOy3kw8cyjJ4UNC"; // jsonbin.io 帳號的 X-Master-Key
 </script>
 <!-- ========================================================================= -->
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -208,19 +210,16 @@ async function bootstrap() {
 
 async function loadAll() {
   try {
-    const res = await window.storage.get("members", true);
-    state.members = res ? JSON.parse(res.value) : [];
+    const data = await loadRemoteData();
+    state.members = data.members || [];
+    state.memberData = data.memberData || {};
   } catch (e) {
+    console.error("load failed", e);
     state.members = [];
+    state.memberData = {};
   }
-  state.memberData = {};
   for (const id of state.members) {
-    try {
-      const res = await window.storage.get("member-data:" + id, true);
-      state.memberData[id] = res ? JSON.parse(res.value) : { displayName: id, quarterlyWFH: {}, overrides: {} };
-    } catch (e) {
-      state.memberData[id] = { displayName: id, quarterlyWFH: {}, overrides: {} };
-    }
+    if (!state.memberData[id]) state.memberData[id] = { displayName: id, quarterlyWFH: {}, overrides: {} };
     if (!state.memberData[id].quarterlyWFH) state.memberData[id].quarterlyWFH = {};
     if (!state.memberData[id].overrides) state.memberData[id].overrides = {};
   }
@@ -231,21 +230,32 @@ async function loadAll() {
   if (state.liffReady && state.currentUserId && !state.members.includes(state.currentUserId)) {
     state.members.push(state.currentUserId);
     state.memberData[state.currentUserId] = { displayName: state.currentUserName, quarterlyWFH: {}, overrides: {} };
-    await saveMembers();
-    await saveMemberData(state.currentUserId);
+    await saveAll();
   }
 
   state.loaded = true;
   render();
 }
 
-async function saveMembers() {
-  try { await window.storage.set("members", JSON.stringify(state.members), true); }
-  catch (e) { console.error("save members failed", e); }
+async function loadRemoteData() {
+  const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}/latest`, {
+    headers: { "X-Master-Key": JSONBIN_KEY }
+  });
+  if (!res.ok) throw new Error("jsonbin load failed: " + res.status);
+  const json = await res.json();
+  return json.record || { members: [], memberData: {} };
 }
-async function saveMemberData(id) {
-  try { await window.storage.set("member-data:" + id, JSON.stringify(state.memberData[id]), true); }
-  catch (e) { console.error("save member data failed", e); }
+
+async function saveAll() {
+  try {
+    await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}`, {
+      method: "PUT",
+      headers: { "X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ members: state.members, memberData: state.memberData })
+    });
+  } catch (e) {
+    console.error("save failed", e);
+  }
 }
 
 function getStatus(id, dateStr, weekday, dateObj) {
@@ -265,7 +275,7 @@ async function updateDisplayName(id, name) {
   if (!name) return;
   state.memberData[id].displayName = name;
   if (id === state.currentUserId) state.currentUserName = name;
-  await saveMemberData(id);
+  await saveAll();
   render();
 }
 
@@ -285,19 +295,19 @@ async function toggleQuarterlyDay(id, year, quarter, wd) {
   }
   if (arr.length === 0) delete d.quarterlyWFH[key];
   else d.quarterlyWFH[key] = arr;
-  await saveMemberData(id);
+  await saveAll();
   render();
 }
 
 async function clearQuarter(id, key) {
   delete state.memberData[id].quarterlyWFH[key];
-  await saveMemberData(id);
+  await saveAll();
   render();
 }
 
 async function cancelDate(id, dateStr) {
   state.memberData[id].overrides[dateStr] = "office";
-  await saveMemberData(id);
+  await saveAll();
   render();
 }
 
@@ -307,8 +317,7 @@ async function addManualMember(name) {
   if (!name || state.members.includes(name)) return;
   state.members.push(name);
   state.memberData[name] = { displayName: name, quarterlyWFH: {}, overrides: {} };
-  await saveMembers();
-  await saveMemberData(name);
+  await saveAll();
   state.currentUserId = name;
   state.currentUserName = name;
   render();
@@ -325,7 +334,7 @@ async function addLeaveRange(id, startStr, endStr) {
     d.overrides[fmtDate(cur)] = "leave";
     cur.setDate(cur.getDate() + 1);
   }
-  await saveMemberData(id);
+  await saveAll();
   state.leaveStart = ""; state.leaveEnd = "";
   render();
 }
@@ -333,14 +342,14 @@ async function addLeaveRange(id, startStr, endStr) {
 async function addAdhocWFH(id, dateStr) {
   if (!dateStr) return;
   state.memberData[id].overrides[dateStr] = "wfh";
-  await saveMemberData(id);
+  await saveAll();
   state.adhocDate = "";
   render();
 }
 
 async function removeOverride(id, dateStr) {
   delete state.memberData[id].overrides[dateStr];
-  await saveMemberData(id);
+  await saveAll();
   render();
 }
 
