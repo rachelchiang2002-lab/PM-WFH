@@ -5,7 +5,7 @@
 <script>
   const LIFF_ID = "2011478484-krfYEfBj"; // 例如 "1234567890-AbCdEfGh"
   const JSONBIN_ID = "6a9e5f2aac6210605aae674e";       // 在 jsonbin.io 建立 bin 後拿到
-  const JSONBIN_KEY = "$2a$10$1aK.CpPWAFqv/mzR9laL6Oh1exm4Ql9h4jcsSnN5Bfpp9mKIa10eW"; // 範圍受限的 Access Key（不是 X-Master-Key，只給讀取+更新權限）
+  const JSONBIN_KEY = "$2a$10$2AYC7zL8.y80RhWQ4FNTH.q9b8XW25wLI6xitCeOy3kw8cyjJ4UNC"; // jsonbin.io 帳號的 X-Master-Key
 </script>
 <!-- ========================================================================= -->
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -168,6 +168,7 @@ let state = {
   memberData: {},             // id -> {displayName, quarterlyWFH:{"2026-Q1":[wd,...]}, overrides:{}}
   tab: "calendar",
   calView: "today", // "today" | "month"
+  dayCursor: startOfDay(new Date()),
   monthCursor: startOfMonth(new Date()),
   selectedDay: null,
   newUserInput: "",
@@ -179,9 +180,12 @@ let state = {
   settingsYear: new Date().getFullYear(),
   settingsQuarter: Math.floor(new Date().getMonth() / 3) + 1,
   quotaWarning: false,
+  saveError: null,
+  loadError: null,
 };
 
 function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
+function startOfDay(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; }
 function pad2(n) { return String(n).padStart(2, "0"); }
 function fmtDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
 function quarterOf(d) { return Math.floor(d.getMonth() / 3) + 1; }
@@ -227,10 +231,12 @@ async function loadAll() {
     const data = await loadRemoteData();
     state.members = data.members || [];
     state.memberData = data.memberData || {};
+    state.loadError = null;
   } catch (e) {
     console.error("load failed", e);
     state.members = [];
     state.memberData = {};
+    state.loadError = "讀取雲端資料失敗，目前顯示的可能不是最新資料。錯誤：" + e.message;
   }
   for (const id of state.members) {
     if (!state.memberData[id]) state.memberData[id] = { displayName: id, quarterlyWFH: {}, overrides: {} };
@@ -262,13 +268,21 @@ async function loadRemoteData() {
 
 async function saveAll() {
   try {
-    await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}`, {
+    const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}`, {
       method: "PUT",
       headers: { "X-Access-Key": JSONBIN_KEY, "Content-Type": "application/json" },
       body: JSON.stringify({ members: state.members, memberData: state.memberData })
     });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error("save failed", res.status, body);
+      state.saveError = `儲存失敗（狀態碼 ${res.status}），資料可能沒有真的存到雲端。請截圖這則訊息回報。`;
+    } else {
+      state.saveError = null;
+    }
   } catch (e) {
     console.error("save failed", e);
+    state.saveError = "儲存失敗（連線錯誤），資料可能沒有真的存到雲端：" + e.message;
   }
 }
 
@@ -414,6 +428,8 @@ function render() {
       ${whoamiHtml}
     </header>
     ${state.liffError ? `<div class="warn-banner">${state.liffError}</div>` : ""}
+    ${state.loadError ? `<div class="warn-banner">${state.loadError}</div>` : ""}
+    ${state.saveError ? `<div class="warn-banner">${state.saveError}</div>` : ""}
     <div class="tabs">
       <div class="tab ${state.tab === 'calendar' ? 'active' : ''}" data-tab="calendar">月曆總覽</div>
       <div class="tab ${state.tab === 'settings' ? 'active' : ''}" data-tab="settings">我的設定</div>
@@ -435,21 +451,27 @@ function renderCalendarTab() {
 }
 
 function renderTodayCard() {
-  const now = new Date();
-  const dateStr = fmtDate(now);
-  const wd = now.getDay();
+  const dt = state.dayCursor;
+  const dateStr = fmtDate(dt);
+  const wd = dt.getDay();
   const rows = [];
   for (const id of state.members) {
-    const status = getStatus(id, dateStr, wd, now);
+    const status = getStatus(id, dateStr, wd, dt);
     if (status) rows.push({ id, name: state.memberData[id]?.displayName || id, status });
   }
   const wdLabel = WD_LABELS[WD_JS_ORDER.indexOf(wd)];
-  const label = `${now.getMonth() + 1}月${now.getDate()}日（週${wdLabel}）`;
+  const todayStr = fmtDate(new Date());
+  const isToday = dateStr === todayStr;
+  const label = `${dt.getMonth() + 1}月${dt.getDate()}日（週${wdLabel}）`;
   return `
     <div class="card">
-      <div class="today-date">今天・${label}</div>
+      <div class="cal-head">
+        <button data-daynav="-1">‹</button>
+        <div class="today-date" style="margin-bottom:0;">${isToday ? '今天・' : ''}${label}</div>
+        <button data-daynav="1">›</button>
+      </div>
       ${rows.length === 0
-        ? '<div class="empty-note">今天大家都在辦公室。</div>'
+        ? '<div class="empty-note">這天大家都在辦公室。</div>'
         : rows.map(r => `
           <div class="detail-row">
             <span class="status-dot ${r.status}"></span>
@@ -550,7 +572,7 @@ function renderDayDetail(dateStr) {
 function renderSettingsTab() {
   // LIFF mode: identity is fixed, jump straight to settings for currentUserId
   if (state.liffReady && state.currentUserId) {
-    return renderMemberSettings(state.currentUserId);
+    return renderMemberSettings(state.currentUserId) + renderMemberManagement();
   }
 
   // Fallback mode: manual name entry / pick existing name
@@ -575,12 +597,47 @@ function renderSettingsTab() {
             </select>
           </div>` : ""}
       </div>
-    `;
+    ` + renderMemberManagement();
   }
-  return renderMemberSettings(state.currentUserId);
+  return renderMemberSettings(state.currentUserId) + renderMemberManagement();
 }
 
-function renderMemberSettings(id) {
+function renderMemberManagement() {
+  if (state.members.length === 0) return "";
+  return `
+    <div class="card">
+      <h3 class="section-h">成員管理</h3>
+      <div class="hint">同仁離職後，可以在這裡把他的資料整個移除（無法復原）</div>
+      <div class="override-list" style="margin-top:8px;">
+        ${state.members.map(id => `
+          <div class="override-item">
+            <span>${state.memberData[id]?.displayName || id}</span>
+            <button class="btn danger" data-remove-member="${id}">移除</button>
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+async function removeMember(id) {
+  const name = state.memberData[id]?.displayName || id;
+  if (!confirm(`確定要移除「${name}」的所有資料嗎？此動作無法復原。`)) return;
+  const pwd = prompt("請輸入管理密碼以確認移除：");
+  if (pwd === null) return; // cancelled
+  if (pwd !== "70817744") {
+    alert("密碼錯誤，未執行移除。");
+    return;
+  }
+  state.members = state.members.filter(m => m !== id);
+  delete state.memberData[id];
+  await saveAll();
+  if (state.currentUserId === id) {
+    state.currentUserId = "";
+    state.currentUserName = "";
+  }
+  render();
+}
   const d = state.memberData[id];
   const year = state.settingsYear;
   const quarter = state.settingsQuarter;
@@ -702,7 +759,21 @@ function bindEvents() {
     el.onclick = () => { state.tab = el.dataset.tab; state.selectedDay = null; render(); };
   });
   document.querySelectorAll("[data-view]").forEach(el => {
-    el.onclick = () => { state.calView = el.dataset.view; state.selectedDay = null; render(); };
+    el.onclick = () => {
+      state.calView = el.dataset.view;
+      if (el.dataset.view === "today") state.dayCursor = startOfDay(new Date());
+      state.selectedDay = null;
+      render();
+    };
+  });
+  document.querySelectorAll("[data-daynav]").forEach(el => {
+    el.onclick = () => {
+      const dir = parseInt(el.dataset.daynav, 10);
+      const next = new Date(state.dayCursor);
+      next.setDate(next.getDate() + dir);
+      state.dayCursor = next;
+      render();
+    };
   });
   document.querySelectorAll("[data-nav]").forEach(el => {
     el.onclick = () => {
@@ -791,6 +862,10 @@ function bindEvents() {
 
   document.querySelectorAll("[data-cancel-date]").forEach(el => {
     el.onclick = async () => { await cancelDate(state.currentUserId, el.dataset.cancelDate); };
+  });
+
+  document.querySelectorAll("[data-remove-member]").forEach(el => {
+    el.onclick = async () => { await removeMember(el.dataset.removeMember); };
   });
 }
 
