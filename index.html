@@ -1,5 +1,6 @@
 <!doctype html>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <!-- ===== 設定區:把下面這行換成你在 LINE Developers Console 拿到的 LIFF ID ===== -->
 <script>
   const LIFF_ID = "2011478484-krfYEfBj"; // 例如 "1234567890-AbCdEfGh"
@@ -28,7 +29,8 @@
     background: var(--bg);
     color: var(--ink);
   }
-  #app { max-width: 880px; margin: 0 auto; padding: 20px 16px 60px; }
+  #app { max-width: 880px; margin: 0 auto; padding: 16px 12px 60px; }
+  @media (min-width: 600px) { #app { padding: 20px 16px 60px; } }
 
   header.top {
     display: flex;
@@ -45,18 +47,19 @@
 
   .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); }
   .tab {
-    padding: 9px 14px; font-size: 14px; font-weight: 600; color: var(--muted);
+    padding: 12px 14px; font-size: 15px; font-weight: 600; color: var(--muted);
     cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; user-select: none;
   }
   .tab.active { color: var(--ink); border-bottom-color: var(--accent); }
 
-  .view-toggle { display: flex; gap: 6px; margin-bottom: 14px; }
+  .view-toggle { display: flex; gap: 8px; margin-bottom: 14px; }
   .view-btn {
-    padding: 7px 14px; font-size: 13px; font-weight: 600; border-radius: 7px;
+    padding: 10px 16px; font-size: 14px; font-weight: 600; border-radius: 8px;
     border: 1px solid var(--border); background: #fff; color: var(--muted); cursor: pointer;
+    min-height: 40px;
   }
   .view-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .today-date { font-size: 16px; font-weight: 700; margin-bottom: 10px; }
+  .today-date { font-size: 17px; font-weight: 700; margin-bottom: 12px; }
 
   .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
   .card + .card { margin-top: 14px; }
@@ -74,58 +77,67 @@
   .dot.wfh { background: var(--wfh); }
   .dot.leave { background: var(--leave); }
 
-  .grid7 { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
-  .wd-label { font-size: 11.5px; color: var(--muted); text-align: center; padding-bottom: 4px; font-weight: 600; }
+  .grid7 { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+  .wd-label { font-size: 10.5px; color: var(--muted); text-align: center; padding-bottom: 4px; font-weight: 600; }
   .day-cell {
-    min-height: 78px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 5px;
-    background: #fff; cursor: pointer; display: flex; flex-direction: column; gap: 4px;
+    min-height: 44px; border: 1px solid var(--border); border-radius: 8px; padding: 5px 4px;
+    background: #fff; cursor: pointer; display: flex; flex-direction: column; gap: 3px;
   }
   .day-cell.dim { background: #fafbfc; color: #c3c7cf; }
   .day-cell:hover { border-color: #c9ced7; }
   .day-cell.today { border-color: var(--accent); border-width: 1.5px; }
-  .day-num { font-size: 12px; font-weight: 700; }
+  .day-num { font-size: 11px; font-weight: 700; }
   .day-cell.dim .day-num { color: #b9bec8; }
-  .chips { display: flex; flex-wrap: wrap; gap: 3px; }
-  .chip { font-size: 10px; font-weight: 700; padding: 2px 4px; border-radius: 5px; line-height: 1.3; }
+  .chips { display: flex; flex-direction: column; gap: 2px; }
+  .chip {
+    font-size: 9.5px; font-weight: 700; padding: 2px 4px; border-radius: 4px; line-height: 1.35;
+    white-space: normal; word-break: break-word;
+  }
   .chip.wfh { background: var(--wfh-bg); color: var(--wfh); }
   .chip.leave { background: var(--leave-bg); color: var(--leave); }
 
-  .detail-title { font-size: 14px; font-weight: 700; margin-bottom: 8px; }
-  .detail-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 13.5px; }
-  .detail-row .badge { font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 5px; }
-  .empty-note { color: var(--muted); font-size: 13px; }
+  .detail-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+  .detail-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: 14.5px; }
+  .detail-row .badge { font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 5px; }
+  .detail-row .cancel-btn { margin-left: auto; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .status-dot.wfh { background: var(--wfh); }
+  .status-dot.leave { background: var(--leave); }
+  .empty-note { color: var(--muted); font-size: 13.5px; }
 
-  label.field-label { font-size: 12.5px; color: var(--muted); font-weight: 600; display: block; margin-bottom: 6px; }
+  label.field-label { font-size: 13px; color: var(--muted); font-weight: 600; display: block; margin-bottom: 6px; }
   select, input[type="date"], input[type="text"] {
-    font-family: inherit; font-size: 14px; padding: 8px 10px; border: 1px solid var(--border);
-    border-radius: 7px; background: #fff; color: var(--ink);
+    font-family: inherit; font-size: 16px; padding: 10px 12px; border: 1px solid var(--border);
+    border-radius: 8px; background: #fff; color: var(--ink); min-height: 44px;
   }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
-  .wd-toggle-row { display: flex; gap: 6px; margin-top: 4px; }
-  .wd-toggle {
-    width: 40px; height: 40px; border-radius: 8px; border: 1px solid var(--border);
-    background: #fff; cursor: pointer; font-size: 13px; font-weight: 700; color: var(--muted);
+  .wd-toggle-row, .q-toggle-row { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
+  .wd-toggle, .q-toggle {
+    min-width: 44px; height: 44px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--border);
+    background: #fff; cursor: pointer; font-size: 14px; font-weight: 700; color: var(--muted);
   }
-  .wd-toggle.on { background: var(--wfh); border-color: var(--wfh); color: #fff; }
-  .btn { border: none; background: var(--accent); color: #fff; padding: 9px 16px; border-radius: 7px; font-size: 13.5px; font-weight: 700; cursor: pointer; }
+  .wd-toggle.on, .q-toggle.on { background: var(--wfh); border-color: var(--wfh); color: #fff; }
+  .btn { border: none; background: var(--accent); color: #fff; padding: 11px 18px; border-radius: 8px; font-size: 14.5px; font-weight: 700; cursor: pointer; min-height: 44px; }
   .btn:hover { opacity: 0.92; }
   .btn.secondary { background: #fff; color: var(--ink); border: 1px solid var(--border); }
   .btn.leave-btn { background: var(--leave); }
-  .btn.danger { background: #fff; color: #b3412a; border: 1px solid #ecd2c8; padding: 4px 9px; font-size: 12px; }
-  .quota { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .btn.danger { background: #fff; color: #b3412a; border: 1px solid #ecd2c8; padding: 7px 12px; font-size: 12.5px; min-height: 32px; }
+  .quota { font-size: 13.5px; color: var(--muted); margin-top: 6px; }
   .quota b { color: var(--ink); }
+  .quota.warn { color: #b3412a; font-weight: 600; }
 
   .override-list { margin-top: 10px; }
-  .override-item { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+  .override-item { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
   .override-item:last-child { border-bottom: none; }
 
-  h3.section-h { font-size: 14px; margin: 0 0 10px; font-weight: 700; }
-  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  h3.section-h { font-size: 15px; margin: 0 0 10px; font-weight: 700; }
+  .hint { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
   .loading { color: var(--muted); font-size: 13px; padding: 20px 0; text-align: center; }
   .warn-banner {
-    background: #fdf3e7; border: 1px solid #f0dcb8; color: #8a5a12; font-size: 12.5px;
+    background: #fdf3e7; border: 1px solid #f0dcb8; color: #8a5a12; font-size: 13px;
     padding: 10px 12px; border-radius: 8px; margin-bottom: 14px;
   }
+  .quarter-summary { font-size: 13px; color: var(--muted); display: flex; align-items: center; justify-content: space-between; padding: 6px 0; }
 </style>
 
 <div id="app">
@@ -144,7 +156,7 @@ let state = {
   currentUserName: "",      // display name
   currentUserPicture: "",   // avatar url (LIFF mode only)
   members: [],               // array of ids
-  memberData: {},             // id -> {displayName, recurringWFH:[], overrides:{}}
+  memberData: {},             // id -> {displayName, quarterlyWFH:{"2026-Q1":[wd,...]}, overrides:{}}
   tab: "calendar",
   calView: "today", // "today" | "month"
   monthCursor: startOfMonth(new Date()),
@@ -153,16 +165,19 @@ let state = {
   leaveStart: "",
   leaveEnd: "",
   adhocDate: "",
+  settingsYear: new Date().getFullYear(),
+  settingsQuarter: Math.floor(new Date().getMonth() / 3) + 1,
+  quotaWarning: false,
 };
 
 function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
 function pad2(n) { return String(n).padStart(2, "0"); }
 function fmtDate(d) { return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`; }
-function abbr(name) {
-  if (!name) return "";
-  const chars = Array.from(name);
-  if (chars.length <= 2) return name;
-  return chars[0] + chars[chars.length - 1];
+function quarterOf(d) { return Math.floor(d.getMonth() / 3) + 1; }
+function quarterKey(d) { return `${d.getFullYear()}-Q${quarterOf(d)}`; }
+function quarterMonthRange(q) {
+  const start = (q - 1) * 3;
+  return [start, start + 2]; // 0-indexed month start/end
 }
 
 async function bootstrap() {
@@ -202,23 +217,22 @@ async function loadAll() {
   for (const id of state.members) {
     try {
       const res = await window.storage.get("member-data:" + id, true);
-      state.memberData[id] = res ? JSON.parse(res.value) : { displayName: id, recurringWFH: [], overrides: {} };
+      state.memberData[id] = res ? JSON.parse(res.value) : { displayName: id, quarterlyWFH: {}, overrides: {} };
     } catch (e) {
-      state.memberData[id] = { displayName: id, recurringWFH: [], overrides: {} };
+      state.memberData[id] = { displayName: id, quarterlyWFH: {}, overrides: {} };
     }
+    if (!state.memberData[id].quarterlyWFH) state.memberData[id].quarterlyWFH = {};
+    if (!state.memberData[id].overrides) state.memberData[id].overrides = {};
   }
 
-  // If LIFF identified the user, make sure they're registered / display name kept fresh
-  if (state.liffReady && state.currentUserId) {
-    if (!state.members.includes(state.currentUserId)) {
-      state.members.push(state.currentUserId);
-      state.memberData[state.currentUserId] = { displayName: state.currentUserName, recurringWFH: [], overrides: {} };
-      await saveMembers();
-      await saveMemberData(state.currentUserId);
-    } else if (state.memberData[state.currentUserId].displayName !== state.currentUserName) {
-      state.memberData[state.currentUserId].displayName = state.currentUserName;
-      await saveMemberData(state.currentUserId);
-    }
+  // If LIFF identified the user but they're not registered yet, add them.
+  // (We only set displayName on first creation — after that the person can
+  // customize it in 我的設定 and it won't be silently overwritten by LINE profile.)
+  if (state.liffReady && state.currentUserId && !state.members.includes(state.currentUserId)) {
+    state.members.push(state.currentUserId);
+    state.memberData[state.currentUserId] = { displayName: state.currentUserName, quarterlyWFH: {}, overrides: {} };
+    await saveMembers();
+    await saveMemberData(state.currentUserId);
   }
 
   state.loaded = true;
@@ -234,15 +248,57 @@ async function saveMemberData(id) {
   catch (e) { console.error("save member data failed", e); }
 }
 
-function getStatus(id, dateStr, weekday) {
+function getStatus(id, dateStr, weekday, dateObj) {
   const d = state.memberData[id];
   if (!d) return null;
   if (d.overrides && d.overrides[dateStr]) {
     const v = d.overrides[dateStr];
     return v === "office" ? null : v;
   }
-  if (d.recurringWFH && d.recurringWFH.includes(weekday)) return "wfh";
+  const qKey = quarterKey(dateObj);
+  if (d.quarterlyWFH && d.quarterlyWFH[qKey] && d.quarterlyWFH[qKey].includes(weekday)) return "wfh";
   return null;
+}
+
+async function updateDisplayName(id, name) {
+  name = name.trim();
+  if (!name) return;
+  state.memberData[id].displayName = name;
+  if (id === state.currentUserId) state.currentUserName = name;
+  await saveMemberData(id);
+  render();
+}
+
+async function toggleQuarterlyDay(id, year, quarter, wd) {
+  const key = `${year}-Q${quarter}`;
+  const d = state.memberData[id];
+  if (!d.quarterlyWFH) d.quarterlyWFH = {};
+  const arr = d.quarterlyWFH[key] ? [...d.quarterlyWFH[key]] : [];
+  const idx = arr.indexOf(wd);
+  if (idx >= 0) {
+    arr.splice(idx, 1);
+    state.quotaWarning = false;
+  } else {
+    if (arr.length >= 2) { state.quotaWarning = true; render(); return; }
+    arr.push(wd);
+    state.quotaWarning = false;
+  }
+  if (arr.length === 0) delete d.quarterlyWFH[key];
+  else d.quarterlyWFH[key] = arr;
+  await saveMemberData(id);
+  render();
+}
+
+async function clearQuarter(id, key) {
+  delete state.memberData[id].quarterlyWFH[key];
+  await saveMemberData(id);
+  render();
+}
+
+async function cancelDate(id, dateStr) {
+  state.memberData[id].overrides[dateStr] = "office";
+  await saveMemberData(id);
+  render();
 }
 
 // ---- fallback manual registration (used only when LIFF isn't configured yet) ----
@@ -250,19 +306,11 @@ async function addManualMember(name) {
   name = name.trim();
   if (!name || state.members.includes(name)) return;
   state.members.push(name);
-  state.memberData[name] = { displayName: name, recurringWFH: [], overrides: {} };
+  state.memberData[name] = { displayName: name, quarterlyWFH: {}, overrides: {} };
   await saveMembers();
   await saveMemberData(name);
   state.currentUserId = name;
   state.currentUserName = name;
-  render();
-}
-
-async function toggleRecurring(id, wd) {
-  const d = state.memberData[id];
-  const i = d.recurringWFH.indexOf(wd);
-  if (i >= 0) d.recurringWFH.splice(i, 1); else d.recurringWFH.push(wd);
-  await saveMemberData(id);
   render();
 }
 
@@ -296,18 +344,19 @@ async function removeOverride(id, dateStr) {
   render();
 }
 
-function countThisMonthWFH(id) {
-  const d = state.memberData[id];
-  if (!d) return 0;
-  const y = state.monthCursor.getFullYear(), m = state.monthCursor.getMonth();
-  const daysInMonth = new Date(y, m + 1, 0).getDate();
-  let count = 0;
-  for (let day = 1; day <= daysInMonth; day++) {
-    const dt = new Date(y, m, day);
-    const status = getStatus(id, fmtDate(dt), dt.getDay());
-    if (status === "wfh") count++;
+function upcomingEntries(id, daysAhead) {
+  daysAhead = daysAhead || 90;
+  const results = [];
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  for (let i = 0; i < daysAhead; i++) {
+    const dt = new Date(start);
+    dt.setDate(start.getDate() + i);
+    const dateStr = fmtDate(dt);
+    const status = getStatus(id, dateStr, dt.getDay(), dt);
+    if (status) results.push({ date: dateStr, status });
   }
-  return count;
+  return results;
 }
 
 function render() {
@@ -353,26 +402,21 @@ function renderTodayCard() {
   const wd = now.getDay();
   const rows = [];
   for (const id of state.members) {
-    const status = getStatus(id, dateStr, wd);
-    if (status) rows.push({ name: state.memberData[id]?.displayName || id, status });
+    const status = getStatus(id, dateStr, wd, now);
+    if (status) rows.push({ id, name: state.memberData[id]?.displayName || id, status });
   }
   const wdLabel = WD_LABELS[WD_JS_ORDER.indexOf(wd)];
   const label = `${now.getMonth() + 1}月${now.getDate()}日（週${wdLabel}）`;
   return `
     <div class="card">
       <div class="today-date">今天・${label}</div>
-      <div class="legend">
-        <span><span class="dot wfh"></span>居家辦公</span>
-        <span><span class="dot leave"></span>休假</span>
-      </div>
       ${rows.length === 0
         ? '<div class="empty-note">今天大家都在辦公室。</div>'
         : rows.map(r => `
           <div class="detail-row">
-            <span class="badge" style="background:${r.status === 'wfh' ? 'var(--wfh-bg)' : 'var(--leave-bg)'}; color:${r.status === 'wfh' ? 'var(--wfh)' : 'var(--leave)'};">
-              ${r.status === 'wfh' ? '居家' : '休假'}
-            </span>
-            <span>${r.name}</span>
+            <span class="status-dot ${r.status}"></span>
+            <span>${r.name}${r.status === 'wfh' ? '居家' : '休假'}</span>
+            ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
           </div>`).join("")}
       ${state.members.length === 0 ? '<div class="hint" style="margin-top:10px;">目前還沒有人登記，請到「我的設定」設定居家日。</div>' : ''}
     </div>
@@ -398,10 +442,10 @@ function renderMonthView() {
     const isDim = wd === 0 || wd === 6;
     let chips = "";
     for (const id of state.members) {
-      const status = getStatus(id, dateStr, wd);
+      const status = getStatus(id, dateStr, wd, dt);
       if (status) {
         const displayName = state.memberData[id]?.displayName || id;
-        chips += `<span class="chip ${status}" title="${displayName}">${abbr(displayName)}</span>`;
+        chips += `<span class="chip ${status}">${displayName}${status === 'wfh' ? '居家' : '休假'}</span>`;
       }
     }
     cells += `
@@ -441,8 +485,8 @@ function renderDayDetail(dateStr) {
   const wd = dt.getDay();
   const rows = [];
   for (const id of state.members) {
-    const status = getStatus(id, dateStr, wd);
-    if (status) rows.push({ name: state.memberData[id]?.displayName || id, status });
+    const status = getStatus(id, dateStr, wd, dt);
+    if (status) rows.push({ id, name: state.memberData[id]?.displayName || id, status });
   }
   const label = `${dt.getMonth() + 1}月${dt.getDate()}日`;
   return `
@@ -452,10 +496,9 @@ function renderDayDetail(dateStr) {
         ? '<div class="empty-note">這天大家都在辦公室。</div>'
         : rows.map(r => `
           <div class="detail-row">
-            <span class="badge" style="background:${r.status === 'wfh' ? 'var(--wfh-bg)' : 'var(--leave-bg)'}; color:${r.status === 'wfh' ? 'var(--wfh)' : 'var(--leave)'};">
-              ${r.status === 'wfh' ? '居家' : '休假'}
-            </span>
-            <span>${r.name}</span>
+            <span class="status-dot ${r.status}"></span>
+            <span>${r.name}${r.status === 'wfh' ? '居家' : '休假'}</span>
+            ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
           </div>`).join("")}
     </div>
   `;
@@ -496,19 +539,60 @@ function renderSettingsTab() {
 
 function renderMemberSettings(id) {
   const d = state.memberData[id];
-  const wfhCount = countThisMonthWFH(id);
-  const overrideEntries = Object.entries(d.overrides || {}).sort();
+  const year = state.settingsYear;
+  const quarter = state.settingsQuarter;
+  const qKey = `${year}-Q${quarter}`;
+  const selectedDays = (d.quarterlyWFH && d.quarterlyWFH[qKey]) || [];
+  const [qStartM, qEndM] = quarterMonthRange(quarter);
+  const qMonthsLabel = `${qStartM + 1}~${qEndM + 1}月`;
+
+  const quarterSummaryEntries = Object.entries(d.quarterlyWFH || {}).sort();
+  const upcoming = upcomingEntries(id, 90);
+  const yearOptions = [year, year + 1].map(y => `<option value="${y}" ${y === year ? "selected" : ""}>${y}</option>`).join("");
 
   return `
     <div class="card">
-      <h3 class="section-h">固定居家辦公日</h3>
-      <div class="hint">設定一次，之後每週自動套用，不用每月重新登記</div>
-      <div class="wd-toggle-row">
+      <h3 class="section-h">顯示名稱</h3>
+      <div class="row">
+        <div>
+          <label class="field-label">在行事曆上顯示的名字</label>
+          <input type="text" id="display-name-input" value="${d.displayName}" />
+        </div>
+        <button class="btn secondary" id="save-name-btn">儲存</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 class="section-h">居家辦公申請（每季）</h3>
+      <div class="hint">選好季度後勾選每週固定居家的星期，最多 2 天，該季（${qMonthsLabel}）就會自動套用</div>
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label class="field-label">年度</label>
+          <select id="settings-year-select">${yearOptions}</select>
+        </div>
+      </div>
+      <div class="q-toggle-row" style="margin-top:10px;">
+        ${[1, 2, 3, 4].map(q => `<button class="q-toggle ${q === quarter ? 'on' : ''}" data-quarter="${q}">Q${q}</button>`).join("")}
+      </div>
+      <div class="wd-toggle-row" style="margin-top:12px;">
         ${WD_JS_ORDER.map((jsWd, idx) => `
-          <button class="wd-toggle ${d.recurringWFH.includes(jsWd) ? 'on' : ''}" data-wd="${jsWd}">${WD_LABELS[idx]}</button>
+          <button class="wd-toggle ${selectedDays.includes(jsWd) ? 'on' : ''}" data-wd="${jsWd}">${WD_LABELS[idx]}</button>
         `).join("")}
       </div>
-      <div class="quota">本月已居家 <b>${wfhCount}</b> 天</div>
+      <div class="quota ${state.quotaWarning ? 'warn' : ''}">
+        ${state.quotaWarning ? '每週最多申請 2 天，請先取消一天再選新的' : `已選 <b>${selectedDays.length}</b> / 2 天`}
+      </div>
+
+      ${quarterSummaryEntries.length > 0 ? `
+        <div style="margin-top:14px; border-top:1px solid var(--border); padding-top:10px;">
+          ${quarterSummaryEntries.map(([key, days]) => `
+            <div class="quarter-summary">
+              <span>${key}：週${days.map(wd => WD_LABELS[WD_JS_ORDER.indexOf(wd)]).join("、")}</span>
+              <button class="btn danger" data-clear-quarter="${key}">清除</button>
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
     </div>
 
     <div class="card">
@@ -528,7 +612,7 @@ function renderMemberSettings(id) {
 
     <div class="card">
       <h3 class="section-h">臨時加開居家日</h3>
-      <div class="hint">固定日以外，這週想多一天居家時使用</div>
+      <div class="hint">季度固定日以外，臨時想多一天居家時使用</div>
       <div class="row">
         <div>
           <label class="field-label">日期</label>
@@ -538,19 +622,20 @@ function renderMemberSettings(id) {
       </div>
     </div>
 
-    ${overrideEntries.length > 0 ? `
-      <div class="card">
-        <h3 class="section-h">個別登記紀錄</h3>
-        <div class="override-list">
-          ${overrideEntries.map(([date, status]) => `
-            <div class="override-item">
-              <span>${date}　${status === "wfh" ? "居家" : status === "leave" ? "休假" : "辦公室"}</span>
-              <button class="btn danger" data-remove-override="${date}">刪除</button>
-            </div>
-          `).join("")}
-        </div>
-      </div>
-    ` : ""}
+    <div class="card">
+      <h3 class="section-h">我的登記（未來 90 天）</h3>
+      <div class="hint">臨時有事想取消，點右邊「取消」即可，只能取消自己的登記</div>
+      ${upcoming.length === 0
+        ? '<div class="empty-note" style="margin-top:8px;">目前沒有安排。</div>'
+        : `<div class="override-list">
+            ${upcoming.map(u => `
+              <div class="override-item">
+                <span>${u.date}　${u.status === "wfh" ? "居家" : "休假"}</span>
+                <button class="btn danger" data-cancel-date="${u.date}">取消</button>
+              </div>
+            `).join("")}
+          </div>`}
+    </div>
   `;
 }
 
@@ -599,7 +684,26 @@ function bindEvents() {
   }
 
   document.querySelectorAll("[data-wd]").forEach(el => {
-    el.onclick = async () => { await toggleRecurring(state.currentUserId, parseInt(el.dataset.wd, 10)); };
+    el.onclick = async () => {
+      await toggleQuarterlyDay(state.currentUserId, state.settingsYear, state.settingsQuarter, parseInt(el.dataset.wd, 10));
+    };
+  });
+
+  const nameInput = document.getElementById("display-name-input");
+  const saveNameBtn = document.getElementById("save-name-btn");
+  if (saveNameBtn) {
+    saveNameBtn.onclick = async () => { await updateDisplayName(state.currentUserId, nameInput.value); };
+  }
+
+  const yearSelect = document.getElementById("settings-year-select");
+  if (yearSelect) {
+    yearSelect.onchange = (e) => { state.settingsYear = parseInt(e.target.value, 10); state.quotaWarning = false; render(); };
+  }
+  document.querySelectorAll("[data-quarter]").forEach(el => {
+    el.onclick = () => { state.settingsQuarter = parseInt(el.dataset.quarter, 10); state.quotaWarning = false; render(); };
+  });
+  document.querySelectorAll("[data-clear-quarter]").forEach(el => {
+    el.onclick = async () => { await clearQuarter(state.currentUserId, el.dataset.clearQuarter); };
   });
 
   const leaveStart = document.getElementById("leave-start");
@@ -618,8 +722,8 @@ function bindEvents() {
     addAdhocBtn.onclick = async () => { await addAdhocWFH(state.currentUserId, state.adhocDate); };
   }
 
-  document.querySelectorAll("[data-remove-override]").forEach(el => {
-    el.onclick = async () => { await removeOverride(state.currentUserId, el.dataset.removeOverride); };
+  document.querySelectorAll("[data-cancel-date]").forEach(el => {
+    el.onclick = async () => { await cancelDate(state.currentUserId, el.dataset.cancelDate); };
   });
 }
 
