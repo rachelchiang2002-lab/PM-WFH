@@ -20,6 +20,8 @@
     --wfh-bg: #e4f0ef;
     --leave: #c1731f;
     --leave-bg: #f7e9db;
+    --business: #5c6bc0;
+    --business-bg: #e8e9f7;
     --accent: #2f6f6b;
     --radius: 10px;
   }
@@ -78,6 +80,7 @@
   .dot { width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
   .dot.wfh { background: var(--wfh); }
   .dot.leave { background: var(--leave); }
+  .dot.business { background: var(--business); }
 
   .grid7 { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
   .wd-label { font-size: 10.5px; color: var(--muted); text-align: center; padding-bottom: 4px; font-weight: 600; }
@@ -97,6 +100,8 @@
   }
   .chip.wfh { background: var(--wfh-bg); color: var(--wfh); }
   .chip.leave { background: var(--leave-bg); color: var(--leave); }
+  .chip.business { background: var(--business-bg); color: var(--business); }
+  .grid5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
 
   .detail-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
   .detail-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; font-size: 14.5px; }
@@ -105,6 +110,7 @@
   .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
   .status-dot.wfh { background: var(--wfh); }
   .status-dot.leave { background: var(--leave); }
+  .status-dot.business { background: var(--business); }
   .empty-note { color: var(--muted); font-size: 13.5px; }
 
   label.field-label { font-size: 13px; color: var(--muted); font-weight: 600; display: block; margin-bottom: 6px; }
@@ -123,6 +129,7 @@
   .btn:hover { opacity: 0.92; }
   .btn.secondary { background: #fff; color: var(--ink); border: 1px solid var(--border); }
   .btn.leave-btn { background: var(--leave); }
+  .btn.business-btn { background: var(--business); }
   .btn.danger { background: #fff; color: #b3412a; border: 1px solid #ecd2c8; padding: 7px 12px; font-size: 12.5px; min-height: 32px; }
   .quota { font-size: 13.5px; color: var(--muted); margin-top: 6px; }
   .quota b { color: var(--ink); }
@@ -166,6 +173,8 @@ let state = {
   newUserInput: "",
   leaveStart: "",
   leaveEnd: "",
+  businessStart: "",
+  businessEnd: "",
   adhocDate: "",
   settingsYear: new Date().getFullYear(),
   settingsQuarter: Math.floor(new Date().getMonth() / 3) + 1,
@@ -180,6 +189,11 @@ function quarterKey(d) { return `${d.getFullYear()}-Q${quarterOf(d)}`; }
 function quarterMonthRange(q) {
   const start = (q - 1) * 3;
   return [start, start + 2]; // 0-indexed month start/end
+}
+function statusLabel(status) {
+  if (status === "wfh") return "居家";
+  if (status === "business") return "公出";
+  return "休假";
 }
 
 async function bootstrap() {
@@ -339,6 +353,22 @@ async function addLeaveRange(id, startStr, endStr) {
   render();
 }
 
+async function addBusinessRange(id, startStr, endStr) {
+  if (!startStr) return;
+  const end = endStr || startStr;
+  const d = state.memberData[id];
+  let cur = new Date(startStr + "T00:00:00");
+  const last = new Date(end + "T00:00:00");
+  if (cur > last) return;
+  while (cur <= last) {
+    d.overrides[fmtDate(cur)] = "business";
+    cur.setDate(cur.getDate() + 1);
+  }
+  await saveAll();
+  state.businessStart = ""; state.businessEnd = "";
+  render();
+}
+
 async function addAdhocWFH(id, dateStr) {
   if (!dateStr) return;
   state.memberData[id].overrides[dateStr] = "wfh";
@@ -380,7 +410,6 @@ function render() {
     <header class="top">
       <div>
         <h1>部門出勤總覽</h1>
-        <div class="sub">居家辦公與休假一目瞭然，不再洗版群組</div>
       </div>
       ${whoamiHtml}
     </header>
@@ -424,7 +453,7 @@ function renderTodayCard() {
         : rows.map(r => `
           <div class="detail-row">
             <span class="status-dot ${r.status}"></span>
-            <span>${r.name}${r.status === 'wfh' ? '居家' : '休假'}</span>
+            <span>${r.name}${statusLabel(r.status)}</span>
             ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
           </div>`).join("")}
       ${state.members.length === 0 ? '<div class="hint" style="margin-top:10px;">目前還沒有人登記，請到「我的設定」設定居家日。</div>' : ''}
@@ -436,38 +465,42 @@ function renderMonthView() {
   const y = state.monthCursor.getFullYear();
   const m = state.monthCursor.getMonth();
   const monthLabel = `${y}年${m + 1}月`;
-  const firstOfMonth = new Date(y, m, 1);
   const daysInMonth = new Date(y, m + 1, 0).getDate();
-  const firstJsWd = firstOfMonth.getDay();
-  const firstColIndex = WD_JS_ORDER.indexOf(firstJsWd);
   const todayStr = fmtDate(new Date());
 
-  let cells = "";
-  for (let i = 0; i < firstColIndex; i++) cells += `<div class="day-cell dim"></div>`;
+  const weekdayDates = [];
   for (let day = 1; day <= daysInMonth; day++) {
     const dt = new Date(y, m, day);
+    const wd = dt.getDay();
+    if (wd >= 1 && wd <= 5) weekdayDates.push(dt); // Mon..Fri only
+  }
+
+  let cells = "";
+  const leading = weekdayDates.length > 0 ? weekdayDates[0].getDay() - 1 : 0; // Mon=1 -> 0 blanks .. Fri=5 -> 4 blanks
+  for (let i = 0; i < leading; i++) cells += `<div class="day-cell dim"></div>`;
+
+  for (const dt of weekdayDates) {
     const dateStr = fmtDate(dt);
     const wd = dt.getDay();
-    const isDim = wd === 0 || wd === 6;
     let chips = "";
     for (const id of state.members) {
       const status = getStatus(id, dateStr, wd, dt);
       if (status) {
         const displayName = state.memberData[id]?.displayName || id;
-        chips += `<span class="chip ${status}">${displayName}${status === 'wfh' ? '居家' : '休假'}</span>`;
+        chips += `<span class="chip ${status}">${displayName}${statusLabel(status)}</span>`;
       }
     }
     cells += `
-      <div class="day-cell ${isDim ? 'dim' : ''} ${dateStr === todayStr ? 'today' : ''}" data-day="${dateStr}">
-        <div class="day-num">${day}</div>
+      <div class="day-cell ${dateStr === todayStr ? 'today' : ''}" data-day="${dateStr}">
+        <div class="day-num">${dt.getDate()}</div>
         <div class="chips">${chips}</div>
       </div>`;
   }
-  const totalCells = firstColIndex + daysInMonth;
-  const trailing = (7 - (totalCells % 7)) % 7;
+  const totalCells = leading + weekdayDates.length;
+  const trailing = (5 - (totalCells % 5)) % 5;
   for (let i = 0; i < trailing; i++) cells += `<div class="day-cell dim"></div>`;
 
-  const wdHeaders = WD_LABELS.map(l => `<div class="wd-label">週${l}</div>`).join("");
+  const wdHeaders = ["一", "二", "三", "四", "五"].map(l => `<div class="wd-label">週${l}</div>`).join("");
   const detail = state.selectedDay ? renderDayDetail(state.selectedDay) : "";
 
   return `
@@ -480,9 +513,10 @@ function renderMonthView() {
       <div class="legend">
         <span><span class="dot wfh"></span>居家辦公</span>
         <span><span class="dot leave"></span>休假</span>
+        <span><span class="dot business"></span>公出</span>
       </div>
-      <div class="grid7">${wdHeaders}</div>
-      <div class="grid7" style="margin-top:4px;">${cells}</div>
+      <div class="grid5">${wdHeaders}</div>
+      <div class="grid5" style="margin-top:4px;">${cells}</div>
       ${state.members.length === 0 ? '<div class="hint" style="margin-top:10px;">目前還沒有人登記，請到「我的設定」設定居家日。</div>' : ''}
     </div>
     ${detail}
@@ -506,7 +540,7 @@ function renderDayDetail(dateStr) {
         : rows.map(r => `
           <div class="detail-row">
             <span class="status-dot ${r.status}"></span>
-            <span>${r.name}${r.status === 'wfh' ? '居家' : '休假'}</span>
+            <span>${r.name}${statusLabel(r.status)}</span>
             ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
           </div>`).join("")}
     </div>
@@ -620,6 +654,21 @@ function renderMemberSettings(id) {
     </div>
 
     <div class="card">
+      <h3 class="section-h">登記公出</h3>
+      <div class="row">
+        <div>
+          <label class="field-label">開始日期</label>
+          <input type="date" id="business-start" value="${state.businessStart}" />
+        </div>
+        <div>
+          <label class="field-label">結束日期（單日可留空）</label>
+          <input type="date" id="business-end" value="${state.businessEnd}" />
+        </div>
+        <button class="btn business-btn" id="add-business-btn">新增公出</button>
+      </div>
+    </div>
+
+    <div class="card">
       <h3 class="section-h">臨時加開居家日</h3>
       <div class="hint">季度固定日以外，臨時想多一天居家時使用</div>
       <div class="row">
@@ -639,7 +688,7 @@ function renderMemberSettings(id) {
         : `<div class="override-list">
             ${upcoming.map(u => `
               <div class="override-item">
-                <span>${u.date}　${u.status === "wfh" ? "居家" : "休假"}</span>
+                <span>${u.date}　${statusLabel(u.status)}</span>
                 <button class="btn danger" data-cancel-date="${u.date}">取消</button>
               </div>
             `).join("")}
@@ -722,6 +771,15 @@ function bindEvents() {
   const addLeaveBtn = document.getElementById("add-leave-btn");
   if (addLeaveBtn) {
     addLeaveBtn.onclick = async () => { await addLeaveRange(state.currentUserId, state.leaveStart, state.leaveEnd); };
+  }
+
+  const businessStart = document.getElementById("business-start");
+  const businessEnd = document.getElementById("business-end");
+  if (businessStart) businessStart.oninput = (e) => { state.businessStart = e.target.value; };
+  if (businessEnd) businessEnd.oninput = (e) => { state.businessEnd = e.target.value; };
+  const addBusinessBtn = document.getElementById("add-business-btn");
+  if (addBusinessBtn) {
+    addBusinessBtn.onclick = async () => { await addBusinessRange(state.currentUserId, state.businessStart, state.businessEnd); };
   }
 
   const adhocDate = document.getElementById("adhoc-date");
