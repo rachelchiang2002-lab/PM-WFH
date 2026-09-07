@@ -2,7 +2,7 @@
 <meta charset="utf-8" />
 <!-- ===== 設定區:把下面這行換成你在 LINE Developers Console 拿到的 LIFF ID ===== -->
 <script>
-  const LIFF_ID = "YOUR_LIFF_ID_HERE"; // 例如 "1234567890-AbCdEfGh"
+  const LIFF_ID = "2011478484-krfYEfBj"; // 例如 "1234567890-AbCdEfGh"
 </script>
 <!-- ========================================================================= -->
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -49,6 +49,14 @@
     cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; user-select: none;
   }
   .tab.active { color: var(--ink); border-bottom-color: var(--accent); }
+
+  .view-toggle { display: flex; gap: 6px; margin-bottom: 14px; }
+  .view-btn {
+    padding: 7px 14px; font-size: 13px; font-weight: 600; border-radius: 7px;
+    border: 1px solid var(--border); background: #fff; color: var(--muted); cursor: pointer;
+  }
+  .view-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .today-date { font-size: 16px; font-weight: 700; margin-bottom: 10px; }
 
   .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
   .card + .card { margin-top: 14px; }
@@ -138,6 +146,7 @@ let state = {
   members: [],               // array of ids
   memberData: {},             // id -> {displayName, recurringWFH:[], overrides:{}}
   tab: "calendar",
+  calView: "today", // "today" | "month"
   monthCursor: startOfMonth(new Date()),
   selectedDay: null,
   newUserInput: "",
@@ -329,6 +338,48 @@ function render() {
 }
 
 function renderCalendarTab() {
+  const toggle = `
+    <div class="view-toggle">
+      <button class="view-btn ${state.calView === 'today' ? 'active' : ''}" data-view="today">今天</button>
+      <button class="view-btn ${state.calView === 'month' ? 'active' : ''}" data-view="month">整月</button>
+    </div>
+  `;
+  return toggle + (state.calView === "today" ? renderTodayCard() : renderMonthView());
+}
+
+function renderTodayCard() {
+  const now = new Date();
+  const dateStr = fmtDate(now);
+  const wd = now.getDay();
+  const rows = [];
+  for (const id of state.members) {
+    const status = getStatus(id, dateStr, wd);
+    if (status) rows.push({ name: state.memberData[id]?.displayName || id, status });
+  }
+  const wdLabel = WD_LABELS[WD_JS_ORDER.indexOf(wd)];
+  const label = `${now.getMonth() + 1}月${now.getDate()}日（週${wdLabel}）`;
+  return `
+    <div class="card">
+      <div class="today-date">今天・${label}</div>
+      <div class="legend">
+        <span><span class="dot wfh"></span>居家辦公</span>
+        <span><span class="dot leave"></span>休假</span>
+      </div>
+      ${rows.length === 0
+        ? '<div class="empty-note">今天大家都在辦公室。</div>'
+        : rows.map(r => `
+          <div class="detail-row">
+            <span class="badge" style="background:${r.status === 'wfh' ? 'var(--wfh-bg)' : 'var(--leave-bg)'}; color:${r.status === 'wfh' ? 'var(--wfh)' : 'var(--leave)'};">
+              ${r.status === 'wfh' ? '居家' : '休假'}
+            </span>
+            <span>${r.name}</span>
+          </div>`).join("")}
+      ${state.members.length === 0 ? '<div class="hint" style="margin-top:10px;">目前還沒有人登記，請到「我的設定」設定居家日。</div>' : ''}
+    </div>
+  `;
+}
+
+function renderMonthView() {
   const y = state.monthCursor.getFullYear();
   const m = state.monthCursor.getMonth();
   const monthLabel = `${y}年${m + 1}月`;
@@ -506,6 +557,9 @@ function renderMemberSettings(id) {
 function bindEvents() {
   document.querySelectorAll(".tab").forEach(el => {
     el.onclick = () => { state.tab = el.dataset.tab; state.selectedDay = null; render(); };
+  });
+  document.querySelectorAll("[data-view]").forEach(el => {
+    el.onclick = () => { state.calView = el.dataset.view; state.selectedDay = null; render(); };
   });
   document.querySelectorAll("[data-nav]").forEach(el => {
     el.onclick = () => {
