@@ -309,6 +309,7 @@ async function updateDisplayName(id, name) {
   if (!name) return;
   state.memberData[id].displayName = name;
   if (id === state.currentUserId) state.currentUserName = name;
+  render();
   await saveAll();
   render();
 }
@@ -329,12 +330,14 @@ async function toggleQuarterlyDay(id, year, quarter, wd) {
   }
   if (arr.length === 0) delete d.quarterlyWFH[key];
   else d.quarterlyWFH[key] = arr;
+  render();
   await saveAll();
   render();
 }
 
 async function clearQuarter(id, key) {
   delete state.memberData[id].quarterlyWFH[key];
+  render();
   await saveAll();
   render();
 }
@@ -345,12 +348,14 @@ async function cancelDate(id, dateStr) {
   state.memberData[id].overrides[dateStr] = currentStatus === "wfh"
     ? { status: "office", cancelledWfh: true }
     : "office";
+  render();
   await saveAll();
   render();
 }
 
 async function restoreWfh(id, dateStr) {
   delete state.memberData[id].overrides[dateStr];
+  render();
   await saveAll();
   render();
 }
@@ -361,9 +366,10 @@ async function addManualMember(name) {
   if (!name || state.members.includes(name)) return;
   state.members.push(name);
   state.memberData[name] = { displayName: name, quarterlyWFH: {}, overrides: {} };
-  await saveAll();
   state.currentUserId = name;
   state.currentUserName = name;
+  render();
+  await saveAll();
   render();
 }
 
@@ -379,8 +385,9 @@ async function addLeaveRange(id, startStr, endStr, startTime, endTime) {
     d.overrides[fmtDate(cur)] = timeLabel ? { status: "leave", time: timeLabel } : "leave";
     cur.setDate(cur.getDate() + 1);
   }
-  await saveAll();
   state.leaveStart = ""; state.leaveEnd = ""; state.leaveStartTime = ""; state.leaveEndTime = "";
+  render();
+  await saveAll();
   render();
 }
 
@@ -395,13 +402,15 @@ async function addBusinessRange(id, startStr, endStr) {
     d.overrides[fmtDate(cur)] = "business";
     cur.setDate(cur.getDate() + 1);
   }
-  await saveAll();
   state.businessStart = ""; state.businessEnd = "";
+  render();
+  await saveAll();
   render();
 }
 
 async function removeOverride(id, dateStr) {
   delete state.memberData[id].overrides[dateStr];
+  render();
   await saveAll();
   render();
 }
@@ -657,11 +666,12 @@ async function removeMember(id) {
   }
   state.members = state.members.filter(m => m !== id);
   delete state.memberData[id];
-  await saveAll();
   if (state.currentUserId === id) {
     state.currentUserId = "";
     state.currentUserName = "";
   }
+  render();
+  await saveAll();
   render();
 }
 
