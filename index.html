@@ -5,7 +5,7 @@
 <script>
   const LIFF_ID = "2011478484-krfYEfBj"; // 例如 "1234567890-AbCdEfGh"
   const JSONBIN_ID =  "6a9e5f2aac6210605aae674e";       // 在 jsonbin.io 建立 bin 後拿到
-  const JSONBIN_KEY = "$2a$10$2AYC7zL8.y80RhWQ4FNTH.q9b8XW25wLI6xitCeOy3kw8cyjJ4UNC"; // jsonbin.io 帳號的 X-Master-Key（先用這個確保能正常運作）
+  const JSONBIN_KEY = "$2a$10$2AYC7zL8.y80RhWQ4FNTH.q9b8XW25wLI6xitCeOy3kw8cyjJ4UNC"; // jsonbin.io 帳號正常運作）
 </script>
 <!-- ========================================================================= -->
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -178,7 +178,6 @@ let state = {
   leaveEndTime: "",
   businessStart: "",
   businessEnd: "",
-  adhocDate: "",
   settingsYear: new Date().getFullYear(),
   settingsQuarter: Math.floor(new Date().getMonth() / 3) + 1,
   quotaWarning: false,
@@ -344,7 +343,17 @@ async function clearQuarter(id, key) {
 }
 
 async function cancelDate(id, dateStr) {
-  state.memberData[id].overrides[dateStr] = "office";
+  const dt = new Date(dateStr + "T00:00:00");
+  const currentStatus = getStatus(id, dateStr, dt.getDay(), dt); // status before we overwrite it
+  state.memberData[id].overrides[dateStr] = currentStatus === "wfh"
+    ? { status: "office", cancelledWfh: true }
+    : "office";
+  await saveAll();
+  render();
+}
+
+async function restoreWfh(id, dateStr) {
+  delete state.memberData[id].overrides[dateStr];
   await saveAll();
   render();
 }
@@ -394,14 +403,6 @@ async function addBusinessRange(id, startStr, endStr) {
   render();
 }
 
-async function addAdhocWFH(id, dateStr) {
-  if (!dateStr) return;
-  state.memberData[id].overrides[dateStr] = "wfh";
-  await saveAll();
-  state.adhocDate = "";
-  render();
-}
-
 async function removeOverride(id, dateStr) {
   delete state.memberData[id].overrides[dateStr];
   await saveAll();
@@ -419,6 +420,23 @@ function upcomingEntries(id, daysAhead) {
     const dateStr = fmtDate(dt);
     const status = getStatus(id, dateStr, dt.getDay(), dt);
     if (status) results.push({ date: dateStr, status, time: getOverrideTime(id, dateStr) });
+  }
+  return results;
+}
+
+function cancelledWfhEntries(id, daysAhead) {
+  daysAhead = daysAhead || 90;
+  const d = state.memberData[id];
+  if (!d) return [];
+  const results = [];
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  for (let i = 0; i < daysAhead; i++) {
+    const dt = new Date(start);
+    dt.setDate(start.getDate() + i);
+    const dateStr = fmtDate(dt);
+    const v = d.overrides && d.overrides[dateStr];
+    if (v && typeof v === "object" && v.cancelledWfh) results.push({ date: dateStr });
   }
   return results;
 }
@@ -661,6 +679,7 @@ function renderMemberSettings(id) {
 
   const quarterSummaryEntries = Object.entries(d.quarterlyWFH || {}).sort();
   const upcoming = upcomingEntries(id, 90);
+  const cancelledWfh = cancelledWfhEntries(id, 90);
   const yearOptions = [year, year + 1].map(y => `<option value="${y}" ${y === year ? "selected" : ""}>${y}</option>`).join("");
 
   return `
@@ -720,17 +739,23 @@ function renderMemberSettings(id) {
           <input type="date" id="leave-end" value="${state.leaveEnd}" />
         </div>
       </div>
-      <div class="row" style="margin-top:10px;">
-        <div>
-          <label class="field-label">開始時間（半天假可留空）</label>
-          <input type="time" id="leave-start-time" value="${state.leaveStartTime}" />
+      <label class="field-label" style="margin-top:12px;">時段（半天假可直接點選，整天假不用選）</label>
+      <div class="q-toggle-row">
+        <button class="wd-toggle" style="width:auto; padding:0 14px;" data-time-preset="full">整天</button>
+        <button class="wd-toggle ${state.leaveStartTime === '09:00' && state.leaveEndTime === '12:00' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="am">上午（09:00-12:00）</button>
+        <button class="wd-toggle ${state.leaveStartTime === '13:00' && state.leaveEndTime === '18:00' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="pm">下午（13:00-18:00）</button>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div style="flex:1; min-width:140px;">
+          <label class="field-label">自訂開始時間</label>
+          <input type="time" id="leave-start-time" value="${state.leaveStartTime}" style="width:100%;" />
         </div>
-        <div>
-          <label class="field-label">結束時間</label>
-          <input type="time" id="leave-end-time" value="${state.leaveEndTime}" />
+        <div style="flex:1; min-width:140px;">
+          <label class="field-label">自訂結束時間</label>
+          <input type="time" id="leave-end-time" value="${state.leaveEndTime}" style="width:100%;" />
         </div>
       </div>
-      <button class="btn leave-btn" id="add-leave-btn" style="margin-top:10px;">新增休假</button>
+      <button class="btn leave-btn" id="add-leave-btn" style="margin-top:12px;">新增休假</button>
     </div>
 
     <div class="card">
@@ -749,27 +774,21 @@ function renderMemberSettings(id) {
     </div>
 
     <div class="card">
-      <h3 class="section-h">臨時加開居家日</h3>
-      <div class="hint">季度固定日以外，臨時想多一天居家時使用</div>
-      <div class="row">
-        <div>
-          <label class="field-label">日期</label>
-          <input type="date" id="adhoc-date" value="${state.adhocDate}" />
-        </div>
-        <button class="btn secondary" id="add-adhoc-btn">加入居家</button>
-      </div>
-    </div>
-
-    <div class="card">
       <h3 class="section-h">我的登記（未來 90 天）</h3>
-      <div class="hint">臨時有事想取消，點右邊「取消」即可，只能取消自己的登記</div>
-      ${upcoming.length === 0
+      <div class="hint">臨時有事想取消，點右邊「取消」即可；取消居家後還想恢復，可以再點「恢復居家」</div>
+      ${upcoming.length === 0 && cancelledWfh.length === 0
         ? '<div class="empty-note" style="margin-top:8px;">目前沒有安排。</div>'
         : `<div class="override-list">
             ${upcoming.map(u => `
               <div class="override-item">
                 <span>${u.date}　${statusLabel(u.status)}${u.time ? `（${u.time}）` : ''}</span>
                 <button class="btn danger" data-cancel-date="${u.date}">取消</button>
+              </div>
+            `).join("")}
+            ${cancelledWfh.map(c => `
+              <div class="override-item">
+                <span>${c.date}　已取消居家</span>
+                <button class="btn secondary" data-restore-date="${c.date}">恢復居家</button>
               </div>
             `).join("")}
           </div>`}
@@ -862,6 +881,16 @@ function bindEvents() {
   const leaveEnd = document.getElementById("leave-end");
   if (leaveStart) leaveStart.oninput = (e) => { state.leaveStart = e.target.value; };
   if (leaveEnd) leaveEnd.oninput = (e) => { state.leaveEnd = e.target.value; };
+  document.querySelectorAll("[data-time-preset]").forEach(el => {
+    el.onclick = () => {
+      const preset = el.dataset.timePreset;
+      if (preset === "am") { state.leaveStartTime = "09:00"; state.leaveEndTime = "12:00"; }
+      else if (preset === "pm") { state.leaveStartTime = "13:00"; state.leaveEndTime = "18:00"; }
+      else { state.leaveStartTime = ""; state.leaveEndTime = ""; }
+      render();
+    };
+  });
+
   const leaveStartTime = document.getElementById("leave-start-time");
   const leaveEndTime = document.getElementById("leave-end-time");
   if (leaveStartTime) leaveStartTime.oninput = (e) => { state.leaveStartTime = e.target.value; };
@@ -882,15 +911,12 @@ function bindEvents() {
     addBusinessBtn.onclick = async () => { await addBusinessRange(state.currentUserId, state.businessStart, state.businessEnd); };
   }
 
-  const adhocDate = document.getElementById("adhoc-date");
-  if (adhocDate) adhocDate.oninput = (e) => { state.adhocDate = e.target.value; };
-  const addAdhocBtn = document.getElementById("add-adhoc-btn");
-  if (addAdhocBtn) {
-    addAdhocBtn.onclick = async () => { await addAdhocWFH(state.currentUserId, state.adhocDate); };
-  }
-
   document.querySelectorAll("[data-cancel-date]").forEach(el => {
     el.onclick = async () => { await cancelDate(state.currentUserId, el.dataset.cancelDate); };
+  });
+
+  document.querySelectorAll("[data-restore-date]").forEach(el => {
+    el.onclick = async () => { await restoreWfh(state.currentUserId, el.dataset.restoreDate); };
   });
 
   document.querySelectorAll("[data-remove-member]").forEach(el => {
