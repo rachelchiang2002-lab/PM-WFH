@@ -776,22 +776,23 @@ function renderMemberSettings(id) {
     <div class="card">
       <h3 class="section-h">我的登記（未來 90 天）</h3>
       <div class="hint">臨時有事想取消，點右邊「取消」即可；取消居家後還想恢復，可以再點「恢復居家」</div>
-      ${upcoming.length === 0 && cancelledWfh.length === 0
-        ? '<div class="empty-note" style="margin-top:8px;">目前沒有安排。</div>'
-        : `<div class="override-list">
-            ${upcoming.map(u => `
-              <div class="override-item">
-                <span>${u.date}　${statusLabel(u.status)}${u.time ? `（${u.time}）` : ''}</span>
-                <button class="btn danger" data-cancel-date="${u.date}">取消</button>
-              </div>
-            `).join("")}
-            ${cancelledWfh.map(c => `
-              <div class="override-item">
-                <span>${c.date}　已取消居家</span>
-                <button class="btn secondary" data-restore-date="${c.date}">恢復居家</button>
-              </div>
-            `).join("")}
-          </div>`}
+      ${(() => {
+        const combined = [
+          ...upcoming.map(u => ({ date: u.date, text: `${statusLabel(u.status)}${u.time ? `（${u.time}）` : ''}`, action: "cancel" })),
+          ...cancelledWfh.map(c => ({ date: c.date, text: "已取消居家", action: "restore" }))
+        ].sort((a, b) => a.date.localeCompare(b.date));
+        if (combined.length === 0) return '<div class="empty-note" style="margin-top:8px;">目前沒有安排。</div>';
+        return `<div class="override-list">
+          ${combined.map(item => `
+            <div class="override-item">
+              <span>${item.date}　${item.text}</span>
+              ${item.action === "cancel"
+                ? `<button class="btn danger" data-cancel-date="${item.date}">取消</button>`
+                : `<button class="btn secondary" data-restore-date="${item.date}">恢復居家</button>`}
+            </div>
+          `).join("")}
+        </div>`;
+      })()}
     </div>
   `;
 }
