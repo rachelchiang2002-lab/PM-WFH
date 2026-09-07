@@ -4,8 +4,7 @@
 <!-- ===== 設定區:把下面這行換成你在 LINE Developers Console 拿到的 LIFF ID ===== -->
 <script>
   const LIFF_ID = "2011478484-krfYEfBj"; // 例如 "1234567890-AbCdEfGh"
-  const JSONBIN_ID =  "6a9e5f2aac6210605aae674e";       // 在 jsonbin.io 建立 bin 後拿到
-  const JSONBIN_KEY = "$2a$10$2AYC7zL8.y80RhWQ4FNTH.q9b8XW25wLI6xitCeOy3kw8cyjJ4UNC"; // jsonbin.io 帳號正常運作）
+  const GAS_URL = "https://script.google.com/macros/s/AKfycbwP4b4C7UzWUuQ9bbuEBlW52pOsRY6J_YyIOalP8wyIDoqr31EIq68RuqIEs_i7MvxZ/exec"; // 部署 Apps Script 後拿到的 /exec 網址
 </script>
 <!-- ========================================================================= -->
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -259,19 +258,17 @@ async function loadAll() {
 }
 
 async function loadRemoteData() {
-  const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}/latest`, {
-    headers: { "X-Master-Key": JSONBIN_KEY }
-  });
-  if (!res.ok) throw new Error("jsonbin load failed: " + res.status);
-  const json = await res.json();
-  return json.record || { members: [], memberData: {} };
+  const res = await fetch(GAS_URL);
+  if (!res.ok) throw new Error("google sheets load failed: " + res.status);
+  const data = await res.json();
+  return (data && data.members) ? data : { members: [], memberData: {} };
 }
 
 async function saveAll() {
   try {
-    const res = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_ID}`, {
-      method: "PUT",
-      headers: { "X-Master-Key": JSONBIN_KEY, "Content-Type": "application/json" },
+    const res = await fetch(GAS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids CORS preflight to Apps Script
       body: JSON.stringify({ members: state.members, memberData: state.memberData })
     });
     if (!res.ok) {
