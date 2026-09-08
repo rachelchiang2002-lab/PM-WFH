@@ -778,8 +778,8 @@ function renderMemberSettings(id) {
       <label class="field-label" style="margin-top:12px;">時段（半天假可直接點選，整天假不用選；多天的假只需填第一天/最後一天的時間）</label>
       <div class="q-toggle-row">
         <button class="wd-toggle" style="width:auto; padding:0 14px;" data-time-preset="full" data-time-target="leave">整天</button>
-        <button class="wd-toggle ${state.leavePeriod === 'am' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="am" data-time-target="leave">上午（09:00-12:00）</button>
-        <button class="wd-toggle ${state.leavePeriod === 'pm' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="pm" data-time-target="leave">下午（13:00-18:00）</button>
+        <button class="wd-toggle ${state.leavePeriod === 'am' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="am" data-time-target="leave">上午</button>
+        <button class="wd-toggle ${state.leavePeriod === 'pm' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="pm" data-time-target="leave">下午</button>
       </div>
       <div class="row" style="margin-top:12px;">
         <div style="flex:1; min-width:140px;">
@@ -809,8 +809,8 @@ function renderMemberSettings(id) {
       <label class="field-label" style="margin-top:12px;">時段（半天可直接點選，整天不用選；多天的公出只需填第一天/最後一天的時間）</label>
       <div class="q-toggle-row">
         <button class="wd-toggle" style="width:auto; padding:0 14px;" data-time-preset="full" data-time-target="business">整天</button>
-        <button class="wd-toggle ${state.businessPeriod === 'am' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="am" data-time-target="business">上午（09:00-12:00）</button>
-        <button class="wd-toggle ${state.businessPeriod === 'pm' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="pm" data-time-target="business">下午（13:00-18:00）</button>
+        <button class="wd-toggle ${state.businessPeriod === 'am' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="am" data-time-target="business">上午</button>
+        <button class="wd-toggle ${state.businessPeriod === 'pm' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="pm" data-time-target="business">下午</button>
       </div>
       <div class="row" style="margin-top:12px;">
         <div style="flex:1; min-width:140px;">
