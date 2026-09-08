@@ -324,7 +324,12 @@ async function toggleQuarterlyDay(id, year, quarter, wd) {
     arr.splice(idx, 1);
     state.quotaWarning = false;
   } else {
-    if (arr.length >= 2) { state.quotaWarning = true; render(); return; }
+    if (arr.length >= 2) {
+      state.quotaWarning = true;
+      render();
+      alert("每週最多只能選 2 天居家。這一季已經選了 2 天，如果要換成別天，請先點掉其中一天，再選新的。");
+      return;
+    }
     arr.push(wd);
     state.quotaWarning = false;
   }
@@ -343,11 +348,7 @@ async function clearQuarter(id, key) {
 }
 
 async function cancelDate(id, dateStr) {
-  const dt = new Date(dateStr + "T00:00:00");
-  const currentStatus = getStatus(id, dateStr, dt.getDay(), dt); // status before we overwrite it
-  state.memberData[id].overrides[dateStr] = currentStatus === "wfh"
-    ? { status: "office", cancelledWfh: true }
-    : "office";
+  state.memberData[id].overrides[dateStr] = "office";
   render();
   await saveAll();
   render();
@@ -442,7 +443,12 @@ function cancelledWfhEntries(id, daysAhead) {
     dt.setDate(start.getDate() + i);
     const dateStr = fmtDate(dt);
     const v = d.overrides && d.overrides[dateStr];
-    if (v && typeof v === "object" && v.cancelledWfh) results.push({ date: dateStr });
+    if (v === undefined) continue;
+    const ovStatus = typeof v === "object" ? v.status : v;
+    if (ovStatus !== "office") continue; // only care about entries currently forced to "office"
+    const qKey = quarterKey(dt);
+    const wouldBeWfh = d.quarterlyWFH && d.quarterlyWFH[qKey] && d.quarterlyWFH[qKey].includes(dt.getDay());
+    if (wouldBeWfh) results.push({ date: dateStr });
   }
   return results;
 }
