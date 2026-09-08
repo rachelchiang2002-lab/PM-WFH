@@ -175,8 +175,12 @@ let state = {
   leaveEnd: "",
   leaveStartTime: "",
   leaveEndTime: "",
+  leavePeriod: null,
   businessStart: "",
   businessEnd: "",
+  businessStartTime: "",
+  businessEndTime: "",
+  businessPeriod: null,
   settingsYear: new Date().getFullYear(),
   settingsQuarter: Math.floor(new Date().getMonth() / 3) + 1,
   quotaWarning: false,
@@ -198,6 +202,13 @@ function statusLabel(status) {
   if (status === "wfh") return "居家";
   if (status === "business") return "公出";
   return "休假";
+}
+
+function statusWithTime(status, time) {
+  if (time === "AM") return `上午${statusLabel(status)}`;
+  if (time === "PM") return `下午${statusLabel(status)}`;
+  if (time) return `${statusLabel(status)}（${time}）`;
+  return statusLabel(status);
 }
 
 async function bootstrap() {
@@ -374,36 +385,48 @@ async function addManualMember(name) {
   render();
 }
 
-async function addLeaveRange(id, startStr, endStr, startTime, endTime) {
-  if (!startStr) return;
+function buildRangeOverrides_(d, startStr, endStr, startTime, endTime, period, status) {
   const end = endStr || startStr;
-  const d = state.memberData[id];
-  const timeLabel = (startTime && endTime) ? `${startTime}-${endTime}` : null;
+  const hasTime = !!(startTime && endTime);
+  const isSingleDay = end === startStr;
   let cur = new Date(startStr + "T00:00:00");
   const last = new Date(end + "T00:00:00");
   if (cur > last) return;
   while (cur <= last) {
-    d.overrides[fmtDate(cur)] = timeLabel ? { status: "leave", time: timeLabel } : "leave";
+    const dateStr = fmtDate(cur);
+    let value;
+    if (!hasTime) {
+      value = status; // full day, no time info
+    } else if (isSingleDay) {
+      const timeVal = period === "am" ? "AM" : period === "pm" ? "PM" : `${startTime}-${endTime}`;
+      value = { status, time: timeVal };
+    } else if (dateStr === startStr) {
+      value = { status, time: `${startTime}起` }; // first day: from this time onward
+    } else if (dateStr === end) {
+      value = { status, time: `至${endTime}` }; // last day: up until this time
+    } else {
+      value = status; // days in between are full days
+    }
+    d.overrides[dateStr] = value;
     cur.setDate(cur.getDate() + 1);
   }
-  state.leaveStart = ""; state.leaveEnd = ""; state.leaveStartTime = ""; state.leaveEndTime = "";
+}
+
+async function addLeaveRange(id, startStr, endStr, startTime, endTime, period) {
+  if (!startStr) return;
+  const d = state.memberData[id];
+  buildRangeOverrides_(d, startStr, endStr, startTime, endTime, period, "leave");
+  state.leaveStart = ""; state.leaveEnd = ""; state.leaveStartTime = ""; state.leaveEndTime = ""; state.leavePeriod = null;
   render();
   await saveAll();
   render();
 }
 
-async function addBusinessRange(id, startStr, endStr) {
+async function addBusinessRange(id, startStr, endStr, startTime, endTime, period) {
   if (!startStr) return;
-  const end = endStr || startStr;
   const d = state.memberData[id];
-  let cur = new Date(startStr + "T00:00:00");
-  const last = new Date(end + "T00:00:00");
-  if (cur > last) return;
-  while (cur <= last) {
-    d.overrides[fmtDate(cur)] = "business";
-    cur.setDate(cur.getDate() + 1);
-  }
-  state.businessStart = ""; state.businessEnd = "";
+  buildRangeOverrides_(d, startStr, endStr, startTime, endTime, period, "business");
+  state.businessStart = ""; state.businessEnd = ""; state.businessStartTime = ""; state.businessEndTime = ""; state.businessPeriod = null;
   render();
   await saveAll();
   render();
@@ -516,7 +539,7 @@ function renderTodayCard() {
         : rows.map(r => `
           <div class="detail-row">
             <span class="status-dot ${r.status}"></span>
-            <span>${r.name}${statusLabel(r.status)}${getOverrideTime(r.id, dateStr) ? `（${getOverrideTime(r.id, dateStr)}）` : ''}</span>
+            <span>${r.name}${statusWithTime(r.status, getOverrideTime(r.id, dateStr))}</span>
             ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
           </div>`).join("")}
       ${state.members.length === 0 ? '<div class="hint" style="margin-top:10px;">目前還沒有人登記，請到「我的設定」設定居家日。</div>' : ''}
@@ -603,7 +626,7 @@ function renderDayDetail(dateStr) {
         : rows.map(r => `
           <div class="detail-row">
             <span class="status-dot ${r.status}"></span>
-            <span>${r.name}${statusLabel(r.status)}${getOverrideTime(r.id, dateStr) ? `（${getOverrideTime(r.id, dateStr)}）` : ''}</span>
+            <span>${r.name}${statusWithTime(r.status, getOverrideTime(r.id, dateStr))}</span>
             ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
           </div>`).join("")}
     </div>
@@ -752,11 +775,11 @@ function renderMemberSettings(id) {
           <input type="date" id="leave-end" value="${state.leaveEnd}" />
         </div>
       </div>
-      <label class="field-label" style="margin-top:12px;">時段（半天假可直接點選，整天假不用選）</label>
+      <label class="field-label" style="margin-top:12px;">時段（半天假可直接點選，整天假不用選；多天的假只需填第一天/最後一天的時間）</label>
       <div class="q-toggle-row">
-        <button class="wd-toggle" style="width:auto; padding:0 14px;" data-time-preset="full">整天</button>
-        <button class="wd-toggle ${state.leaveStartTime === '09:00' && state.leaveEndTime === '12:00' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="am">上午（09:00-12:00）</button>
-        <button class="wd-toggle ${state.leaveStartTime === '13:00' && state.leaveEndTime === '18:00' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="pm">下午（13:00-18:00）</button>
+        <button class="wd-toggle" style="width:auto; padding:0 14px;" data-time-preset="full" data-time-target="leave">整天</button>
+        <button class="wd-toggle ${state.leavePeriod === 'am' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="am" data-time-target="leave">上午（09:00-12:00）</button>
+        <button class="wd-toggle ${state.leavePeriod === 'pm' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="pm" data-time-target="leave">下午（13:00-18:00）</button>
       </div>
       <div class="row" style="margin-top:12px;">
         <div style="flex:1; min-width:140px;">
@@ -782,8 +805,24 @@ function renderMemberSettings(id) {
           <label class="field-label">結束日期（單日可留空）</label>
           <input type="date" id="business-end" value="${state.businessEnd}" />
         </div>
-        <button class="btn business-btn" id="add-business-btn">新增公出</button>
       </div>
+      <label class="field-label" style="margin-top:12px;">時段（半天可直接點選，整天不用選；多天的公出只需填第一天/最後一天的時間）</label>
+      <div class="q-toggle-row">
+        <button class="wd-toggle" style="width:auto; padding:0 14px;" data-time-preset="full" data-time-target="business">整天</button>
+        <button class="wd-toggle ${state.businessPeriod === 'am' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="am" data-time-target="business">上午（09:00-12:00）</button>
+        <button class="wd-toggle ${state.businessPeriod === 'pm' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="pm" data-time-target="business">下午（13:00-18:00）</button>
+      </div>
+      <div class="row" style="margin-top:12px;">
+        <div style="flex:1; min-width:140px;">
+          <label class="field-label">自訂開始時間</label>
+          <input type="time" id="business-start-time" value="${state.businessStartTime}" style="width:100%;" />
+        </div>
+        <div style="flex:1; min-width:140px;">
+          <label class="field-label">自訂結束時間</label>
+          <input type="time" id="business-end-time" value="${state.businessEndTime}" style="width:100%;" />
+        </div>
+      </div>
+      <button class="btn business-btn" id="add-business-btn" style="margin-top:12px;">新增公出</button>
     </div>
 
     <div class="card">
@@ -791,7 +830,7 @@ function renderMemberSettings(id) {
       <div class="hint">臨時有事想取消，點右邊「取消」即可；取消居家後還想恢復，可以再點「恢復居家」</div>
       ${(() => {
         const combined = [
-          ...upcoming.map(u => ({ date: u.date, text: `${statusLabel(u.status)}${u.time ? `（${u.time}）` : ''}`, action: "cancel" })),
+          ...upcoming.map(u => ({ date: u.date, text: `${statusWithTime(u.status, u.time)}`, action: "cancel" })),
           ...cancelledWfh.map(c => ({ date: c.date, text: "已取消居家", action: "restore" }))
         ].sort((a, b) => a.date.localeCompare(b.date));
         if (combined.length === 0) return '<div class="empty-note" style="margin-top:8px;">目前沒有安排。</div>';
@@ -898,21 +937,26 @@ function bindEvents() {
   document.querySelectorAll("[data-time-preset]").forEach(el => {
     el.onclick = () => {
       const preset = el.dataset.timePreset;
-      if (preset === "am") { state.leaveStartTime = "09:00"; state.leaveEndTime = "12:00"; }
-      else if (preset === "pm") { state.leaveStartTime = "13:00"; state.leaveEndTime = "18:00"; }
-      else { state.leaveStartTime = ""; state.leaveEndTime = ""; }
+      const target = el.dataset.timeTarget;
+      const times = preset === "am" ? ["09:00", "12:00"] : preset === "pm" ? ["13:00", "18:00"] : ["", ""];
+      const period = preset === "am" ? "am" : preset === "pm" ? "pm" : null;
+      if (target === "business") {
+        state.businessStartTime = times[0]; state.businessEndTime = times[1]; state.businessPeriod = period;
+      } else {
+        state.leaveStartTime = times[0]; state.leaveEndTime = times[1]; state.leavePeriod = period;
+      }
       render();
     };
   });
 
   const leaveStartTime = document.getElementById("leave-start-time");
   const leaveEndTime = document.getElementById("leave-end-time");
-  if (leaveStartTime) leaveStartTime.oninput = (e) => { state.leaveStartTime = e.target.value; };
-  if (leaveEndTime) leaveEndTime.oninput = (e) => { state.leaveEndTime = e.target.value; };
+  if (leaveStartTime) leaveStartTime.oninput = (e) => { state.leaveStartTime = e.target.value; state.leavePeriod = null; };
+  if (leaveEndTime) leaveEndTime.oninput = (e) => { state.leaveEndTime = e.target.value; state.leavePeriod = null; };
   const addLeaveBtn = document.getElementById("add-leave-btn");
   if (addLeaveBtn) {
     addLeaveBtn.onclick = async () => {
-      await addLeaveRange(state.currentUserId, state.leaveStart, state.leaveEnd, state.leaveStartTime, state.leaveEndTime);
+      await addLeaveRange(state.currentUserId, state.leaveStart, state.leaveEnd, state.leaveStartTime, state.leaveEndTime, state.leavePeriod);
     };
   }
 
@@ -920,9 +964,15 @@ function bindEvents() {
   const businessEnd = document.getElementById("business-end");
   if (businessStart) businessStart.oninput = (e) => { state.businessStart = e.target.value; };
   if (businessEnd) businessEnd.oninput = (e) => { state.businessEnd = e.target.value; };
+  const businessStartTime = document.getElementById("business-start-time");
+  const businessEndTime = document.getElementById("business-end-time");
+  if (businessStartTime) businessStartTime.oninput = (e) => { state.businessStartTime = e.target.value; state.businessPeriod = null; };
+  if (businessEndTime) businessEndTime.oninput = (e) => { state.businessEndTime = e.target.value; state.businessPeriod = null; };
   const addBusinessBtn = document.getElementById("add-business-btn");
   if (addBusinessBtn) {
-    addBusinessBtn.onclick = async () => { await addBusinessRange(state.currentUserId, state.businessStart, state.businessEnd); };
+    addBusinessBtn.onclick = async () => {
+      await addBusinessRange(state.currentUserId, state.businessStart, state.businessEnd, state.businessStartTime, state.businessEndTime, state.businessPeriod);
+    };
   }
 
   document.querySelectorAll("[data-cancel-date]").forEach(el => {
