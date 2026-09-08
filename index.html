@@ -100,6 +100,8 @@
   .chip.wfh { background: var(--wfh-bg); color: var(--wfh); }
   .chip.leave { background: var(--leave-bg); color: var(--leave); }
   .chip.business { background: var(--business-bg); color: var(--business); }
+  .chip.holiday { background: #fbe4e4; color: #b3412a; }
+  .holiday-note { background: #fbe4e4; color: #b3412a; font-weight: 600; padding: 10px 12px; border-radius: 8px; font-size: 14px; }
   .grid5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
 
   .detail-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
@@ -155,6 +157,18 @@
 <script>
 const WD_LABELS = ["一","二","三","四","五","六","日"]; // Mon..Sun columns
 const WD_JS_ORDER = [1,2,3,4,5,6,0]; // corresponding JS getDay() values
+
+// 國定假日：這幾天一律視為不上班，個人居家/休假/公出登記都不會顯示
+const HOLIDAYS = {
+  "2026-09-25": ["中秋節", "孔子誕辰紀念日"],
+  "2026-10-09": ["國慶補假"],
+  "2026-10-26": ["光復補假"],
+  "2026-12-25": ["行憲紀念日"],
+};
+function holidayName(dateStr) {
+  const h = HOLIDAYS[dateStr];
+  return h ? h.join("、") : null;
+}
 
 let state = {
   loaded: false,
@@ -296,6 +310,7 @@ async function saveAll() {
 }
 
 function getStatus(id, dateStr, weekday, dateObj) {
+  if (HOLIDAYS[dateStr]) return null; // 國定假日不上班，不顯示任何個人登記
   const d = state.memberData[id];
   if (!d) return null;
   if (d.overrides && d.overrides[dateStr] !== undefined) {
@@ -465,6 +480,7 @@ function cancelledWfhEntries(id, daysAhead) {
     const dt = new Date(start);
     dt.setDate(start.getDate() + i);
     const dateStr = fmtDate(dt);
+    if (HOLIDAYS[dateStr]) continue; // national holiday, no work day to restore to
     const v = d.overrides && d.overrides[dateStr];
     if (v === undefined) continue;
     const ovStatus = typeof v === "object" ? v.status : v;
@@ -518,6 +534,7 @@ function renderTodayCard() {
   const dt = state.dayCursor;
   const dateStr = fmtDate(dt);
   const wd = dt.getDay();
+  const holiday = holidayName(dateStr);
   const rows = [];
   for (const id of state.members) {
     const status = getStatus(id, dateStr, wd, dt);
@@ -534,14 +551,16 @@ function renderTodayCard() {
         <div class="today-date" style="margin-bottom:0;">${isToday ? '今天・' : ''}${label}</div>
         <button data-daynav="1">›</button>
       </div>
-      ${rows.length === 0
-        ? '<div class="empty-note">這天大家都在辦公室。</div>'
-        : rows.map(r => `
-          <div class="detail-row">
-            <span class="status-dot ${r.status}"></span>
-            <span>${r.name}${statusWithTime(r.status, getOverrideTime(r.id, dateStr))}</span>
-            ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
-          </div>`).join("")}
+      ${holiday
+        ? `<div class="holiday-note">國定假日：${holiday}，不上班</div>`
+        : rows.length === 0
+          ? '<div class="empty-note">這天大家都在辦公室。</div>'
+          : rows.map(r => `
+            <div class="detail-row">
+              <span class="status-dot ${r.status}"></span>
+              <span>${r.name}${statusWithTime(r.status, getOverrideTime(r.id, dateStr))}</span>
+              ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
+            </div>`).join("")}
       ${state.members.length === 0 ? '<div class="hint" style="margin-top:10px;">目前還沒有人登記，請到「我的設定」設定居家日。</div>' : ''}
     </div>
   `;
@@ -568,12 +587,17 @@ function renderMonthView() {
   for (const dt of weekdayDates) {
     const dateStr = fmtDate(dt);
     const wd = dt.getDay();
+    const holiday = holidayName(dateStr);
     let chips = "";
-    for (const id of state.members) {
-      const status = getStatus(id, dateStr, wd, dt);
-      if (status) {
-        const displayName = state.memberData[id]?.displayName || id;
-        chips += `<span class="chip ${status}">${displayName}</span>`;
+    if (holiday) {
+      chips = `<span class="chip holiday">${holiday}</span>`;
+    } else {
+      for (const id of state.members) {
+        const status = getStatus(id, dateStr, wd, dt);
+        if (status) {
+          const displayName = state.memberData[id]?.displayName || id;
+          chips += `<span class="chip ${status}">${displayName}</span>`;
+        }
       }
     }
     cells += `
@@ -612,6 +636,7 @@ function renderMonthView() {
 function renderDayDetail(dateStr) {
   const dt = new Date(dateStr + "T00:00:00");
   const wd = dt.getDay();
+  const holiday = holidayName(dateStr);
   const rows = [];
   for (const id of state.members) {
     const status = getStatus(id, dateStr, wd, dt);
@@ -621,14 +646,16 @@ function renderDayDetail(dateStr) {
   return `
     <div class="card">
       <div class="detail-title">${label} 詳情</div>
-      ${rows.length === 0
-        ? '<div class="empty-note">這天大家都在辦公室。</div>'
-        : rows.map(r => `
-          <div class="detail-row">
-            <span class="status-dot ${r.status}"></span>
-            <span>${r.name}${statusWithTime(r.status, getOverrideTime(r.id, dateStr))}</span>
-            ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
-          </div>`).join("")}
+      ${holiday
+        ? `<div class="holiday-note">國定假日：${holiday}，不上班</div>`
+        : rows.length === 0
+          ? '<div class="empty-note">這天大家都在辦公室。</div>'
+          : rows.map(r => `
+            <div class="detail-row">
+              <span class="status-dot ${r.status}"></span>
+              <span>${r.name}${statusWithTime(r.status, getOverrideTime(r.id, dateStr))}</span>
+              ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
+            </div>`).join("")}
     </div>
   `;
 }
