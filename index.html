@@ -160,8 +160,7 @@ const WD_JS_ORDER = [1,2,3,4,5,6,0]; // corresponding JS getDay() values
 
 // 國定假日：這幾天一律視為不上班，個人居家/休假/公出登記都不會顯示
 const HOLIDAYS = {
-  "2026-09-25": ["中秋節"],
-  "2026-09-28": ["孔子誕辰紀念日"],
+  "2026-09-25": ["中秋節", "孔子誕辰紀念日"],
   "2026-10-09": ["國慶補假"],
   "2026-10-26": ["光復補假"],
   "2026-12-25": ["行憲紀念日"],
@@ -228,28 +227,63 @@ function statusWithTime(status, time) {
 
 async function bootstrap() {
   const liffConfigured = LIFF_ID && LIFF_ID !== "YOUR_LIFF_ID_HERE";
-  if (liffConfigured && window.liff) {
+  if (!liffConfigured) {
+    state.liffError = "尚未設定 LIFF_ID，目前是測試模式，請手動輸入姓名。部署到 LINE 後會自動改為自動登入。";
+    await loadAll();
+    return;
+  }
+  if (!window.liff) {
+    state.liffError = "LINE 登入元件載入失敗，暫時切換為手動選擇姓名模式。";
+    await loadAll();
+    return;
+  }
+  try {
+    await Promise.race([
+      liff.init({ liffId: LIFF_ID }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("liff.init 逾時（可能是網路環境擋住連線）")), 5000))
+    ]);
+  } catch (e) {
+    console.error("LIFF init failed", e);
+    state.liffError = "LINE 登入初始化失敗或逾時，暫時切換為手動選擇姓名模式。";
+    await loadAll();
+    return;
+  }
+  if (liff.isLoggedIn()) {
     try {
-      await liff.init({ liffId: LIFF_ID });
-      if (!liff.isLoggedIn()) {
-        liff.login();
-        return; // page will redirect through LINE login
-      }
-      const profile = await liff.getProfile();
+      const profile = await Promise.race([
+        liff.getProfile(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("liff.getProfile 逾時")), 5000))
+      ]);
       state.currentUserId = profile.userId;
       state.currentUserName = profile.displayName;
       state.currentUserPicture = profile.pictureUrl || "";
       state.liffReady = true;
     } catch (e) {
-      console.error("LIFF init failed", e);
-      state.liffError = "LINE 登入初始化失敗，暫時切換為手動選擇姓名模式。";
+      console.error("liff.getProfile failed", e);
     }
-  } else {
-    state.liffError = liffConfigured
-      ? null
-      : "尚未設定 LIFF_ID，目前是測試模式，請手動輸入姓名。部署到 LINE 後會自動改為自動登入。";
+    await loadAll();
+    return;
   }
-  await loadAll();
+  // Not logged in yet — offer a choice instead of forcing an immediate LINE-login redirect,
+  // so people who don't want to authorize LINE can still use the app.
+  renderLoginChoice();
+}
+
+function renderLoginChoice() {
+  const app = document.getElementById("app");
+  app.innerHTML = `
+    <div style="max-width:360px; margin:60px auto; text-align:center; padding:0 16px;">
+      <h2 style="margin-bottom:6px; font-size:19px;">部門出勤總覽</h2>
+      <p style="color:var(--muted); font-size:13.5px; margin-bottom:24px;">選擇登入方式</p>
+      <button class="btn" id="line-login-btn" style="width:100%; margin-bottom:10px;">使用 LINE 登入</button>
+      <button class="btn secondary" id="manual-login-btn" style="width:100%;">不使用 LINE，直接輸入姓名</button>
+    </div>
+  `;
+  document.getElementById("line-login-btn").onclick = () => { liff.login(); };
+  document.getElementById("manual-login-btn").onclick = async () => {
+    state.liffReady = false;
+    await loadAll();
+  };
 }
 
 async function loadAll() {
