@@ -4,7 +4,7 @@
 <!-- ===== 設定區:把下面這行換成你在 LINE Developers Console 拿到的 LIFF ID ===== -->
 <script>
   const LIFF_ID = "2011478484-krfYEfBj"; // 例如 "1234567890-AbCdEfGh"
-  const GAS_URL = "https://script.google.com/macros/s/AKfycbwP4b4C7UzWUuQ9bbuEBlW52pOsRY6J_YyIOalP8wyIDoqr31EIq68RuqIEs_i7MvxZ/exec"; // 部署 Apps Script 後拿到的 /exec 網址
+  const FIREBASE_URL = "https://pm-wfh-default-rtdb.asia-southeast1.firebasedatabase.app/data.json"; // Firebase Realtime Database 的資料網址
 </script>
 <!-- ========================================================================= -->
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -319,8 +319,8 @@ async function loadAll() {
 }
 
 async function loadRemoteData() {
-  const res = await fetch(GAS_URL);
-  if (!res.ok) throw new Error("google sheets load failed: " + res.status);
+  const res = await fetch(FIREBASE_URL);
+  if (!res.ok) throw new Error("firebase load failed: " + res.status);
   const data = await res.json();
   return (data && data.members) ? data : { members: [], memberData: {} };
 }
@@ -334,9 +334,9 @@ async function saveAll() {
     return;
   }
   try {
-    const res = await fetch(GAS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" }, // avoids CORS preflight to Apps Script
+    const res = await fetch(FIREBASE_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ members: state.members, memberData: state.memberData })
     });
     if (!res.ok) {
