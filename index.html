@@ -325,6 +325,13 @@ async function loadRemoteData() {
 }
 
 async function saveAll() {
+  if (state.loadError) {
+    // We don't trust our in-memory copy of the data right now (the last read
+    // from the cloud failed), so refuse to write — writing could permanently
+    // overwrite good server-side data with an incomplete local snapshot.
+    state.saveError = "剛剛讀取雲端資料時失敗，為了避免覆蓋掉正確的資料，這次操作暫時沒有存檔。請重新整理頁面，確認資料正常讀取後再試一次。";
+    return;
+  }
   try {
     const res = await fetch(GAS_URL, {
       method: "POST",
