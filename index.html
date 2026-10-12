@@ -122,6 +122,13 @@
     font-family: inherit; font-size: 16px; padding: 10px 12px; border: 1px solid var(--border);
     border-radius: 8px; background: #fff; color: var(--ink); min-height: 44px;
   }
+  .pw-field { position: relative; width: 100%; }
+  .pw-field input { width: 100%; padding-right: 40px; }
+  .pw-field .pw-toggle {
+    position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; cursor: pointer; font-size: 16px; line-height: 1;
+    color: var(--muted); padding: 8px; min-height: auto;
+  }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
   .wd-toggle-row, .q-toggle-row { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
   .wd-toggle, .q-toggle {
@@ -258,6 +265,11 @@ function randomTempPassword() {
   for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
   return s;
 }
+// 分機 -> 會員 id 的對照，依序嘗試兩種方式：
+// 1. 這個人自己已經在「我的設定」登記過分機（不管他的帳號是不是用 LINE 建立的，只要本人
+//    自己登記過，就代表這個 ext 是他本人認領的，可以直接信任）
+// 2. 還沒自己登記過，但分機剛好在 STAFF_DIRECTORY 清單裡，而且剛好有一筆現有資料的顯示名稱
+//    跟清單上的登記名稱一模一樣（涵蓋目前既有同仁、包含少數早期用舊版免驗證模式建立的資料）
 function findMemberIdByExt(ext) {
   for (const id of state.members) {
     if (state.memberData[id] && state.memberData[id].ext === ext) return id;
@@ -318,6 +330,8 @@ let state = {
   webLogin: { step: "ext", ext: "", matchedId: null, matchedName: "", error: "" },
   changePwError: "",
   changePwSuccess: false,
+  webAccessError: "",
+  webAccessSuccess: false,
 };
 
 function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
@@ -416,6 +430,27 @@ async function enterWebLoginMode() {
   render();
 }
 
+// ---- 共用：可切換顯示/隱藏的密碼輸入框 ----
+function pwFieldHtml(id, placeholder, wrapperStyle) {
+  return `
+    <div class="pw-field" style="${wrapperStyle || ''}">
+      <input type="password" id="${id}" placeholder="${placeholder}" />
+      <button type="button" class="pw-toggle" data-pw-toggle="${id}" aria-label="顯示密碼">👁</button>
+    </div>
+  `;
+}
+function bindPasswordToggles() {
+  document.querySelectorAll("[data-pw-toggle]").forEach(el => {
+    el.onclick = () => {
+      const input = document.getElementById(el.dataset.pwToggle);
+      if (!input) return;
+      const show = input.type === "password";
+      input.type = show ? "text" : "password";
+      el.textContent = show ? "🙈" : "👁";
+    };
+  });
+}
+
 // ---- 電腦版：分機 + 密碼登入畫面 ----
 function renderWebLoginGate() {
   const app = document.getElementById("app");
@@ -435,7 +470,7 @@ function renderWebLoginGate() {
   } else if (w.step === "blocked") {
     body = `
       <h3 class="section-h">尚未啟用電腦版</h3>
-      <div class="hint">${w.matchedName} 您好，系統裡還沒有您的登記資料，請先透過手機 LINE 開啟本系統登入過一次，電腦版才能使用密碼登入。</div>
+      <div class="hint">系統裡還沒有這支分機的登入資料。請先透過手機 LINE 開啟本系統登入過一次，登入後到「我的設定」填寫 Email 與分機號碼，之後就能用這組分機登入電腦版了。</div>
       <button class="btn secondary" id="web-back-to-ext-btn" style="width:100%; margin-top:14px;">返回</button>
     `;
   } else if (w.step === "setpw") {
@@ -443,8 +478,8 @@ function renderWebLoginGate() {
       <h3 class="section-h">初次使用，請設定密碼</h3>
       <div class="hint" style="margin-bottom:10px;">${w.matchedName} 您好，請設定登入密碼（4～12 碼，英數符號不限）</div>
       ${errHtml}
-      <input type="password" id="web-setpw-1" placeholder="新密碼" style="width:100%;" />
-      <input type="password" id="web-setpw-2" placeholder="再輸入一次新密碼" style="width:100%; margin-top:8px;" />
+      ${pwFieldHtml("web-setpw-1", "新密碼")}
+      ${pwFieldHtml("web-setpw-2", "再輸入一次新密碼", "margin-top:8px;")}
       <button class="btn" id="web-setpw-confirm-btn" style="width:100%; margin-top:12px;">設定並登入</button>
       <button class="btn secondary" id="web-back-to-ext-btn" style="width:100%; margin-top:8px;">返回</button>
     `;
@@ -452,7 +487,7 @@ function renderWebLoginGate() {
     body = `
       <h3 class="section-h">${w.matchedName}，歡迎回來</h3>
       ${errHtml}
-      <input type="password" id="web-pw-input" placeholder="密碼" style="width:100%;" />
+      ${pwFieldHtml("web-pw-input", "密碼")}
       <button class="btn" id="web-pw-login-btn" style="width:100%; margin-top:12px;">登入</button>
       <div style="text-align:center; margin-top:12px;">
         <a href="#" id="web-forgot-link" style="font-size:13px; color:var(--muted);">忘記密碼？</a>
@@ -460,8 +495,9 @@ function renderWebLoginGate() {
       <button class="btn secondary" id="web-back-to-ext-btn" style="width:100%; margin-top:8px;">返回</button>
     `;
   } else if (w.step === "forgot") {
+    const md = w.matchedId ? state.memberData[w.matchedId] : null;
     const entry = STAFF_DIRECTORY[w.ext];
-    const email = entry ? entry.email : "";
+    const email = (md && md.email) || (entry ? entry.email : "");
     body = `
       <h3 class="section-h">重設密碼</h3>
       <div class="hint">將寄送一組新的臨時密碼到：${email}</div>
@@ -484,6 +520,7 @@ function renderWebLoginGate() {
 }
 
 function bindWebLoginEvents() {
+  bindPasswordToggles();
   const extInput = document.getElementById("web-ext-input");
   if (extInput) {
     extInput.oninput = (e) => { state.webLogin.ext = e.target.value.trim(); };
@@ -522,22 +559,22 @@ function bindWebLoginEvents() {
 
 async function handleExtSubmit() {
   const ext = state.webLogin.ext.trim();
-  const entry = STAFF_DIRECTORY[ext];
-  if (!entry) {
-    state.webLogin.error = "查無此分機，請確認輸入是否正確。";
+  if (!ext) {
+    state.webLogin.error = "請輸入分機號碼。";
     render();
     return;
   }
   const id = findMemberIdByExt(ext);
   if (!id) {
+    // 不管這支分機有沒有在 STAFF_DIRECTORY 清單裡，只要找不到已經認領過這支分機的人，
+    // 一律引導去用 LINE 登入並自行登記（這樣新人加入也不需要改程式碼）。
     state.webLogin.step = "blocked";
-    state.webLogin.matchedName = entry.name;
     state.webLogin.error = "";
     render();
     return;
   }
   state.webLogin.matchedId = id;
-  state.webLogin.matchedName = state.memberData[id].displayName || entry.name;
+  state.webLogin.matchedName = state.memberData[id].displayName || ext;
   state.webLogin.error = "";
   const hasPw = !!state.memberData[id].passwordHash;
   state.webLogin.step = hasPw ? "password" : "setpw";
@@ -593,20 +630,23 @@ function completeWebLogin(id) {
 
 async function handleForgotSubmit() {
   const ext = state.webLogin.ext;
+  const id = state.webLogin.matchedId;
+  const d = id ? state.memberData[id] : null;
   const entry = STAFF_DIRECTORY[ext];
-  if (!entry || !entry.email) {
+  const email = (d && d.email) || (entry && entry.email);
+  const name = (d && d.displayName) || (entry && entry.name) || "";
+  if (!email) {
     state.webLogin.error = "查無對應的 Email，請聯絡管理者協助重設。";
     render();
     return;
   }
-  const id = state.webLogin.matchedId;
   const tempPw = randomTempPassword();
   const salt = randomHex(8);
   const hash = await hashPassword(tempPw, salt);
   state.memberData[id].passwordSalt = salt;
   state.memberData[id].passwordHash = hash;
   await saveAll();
-  const ok = await sendResetEmail(entry.email, entry.name, tempPw);
+  const ok = await sendResetEmail(email, name, tempPw);
   if (!ok) {
     state.webLogin.error = "密碼已重設，但信件寄送失敗，請直接聯絡管理者取得新密碼，或確認網路連線後再試一次。";
     render();
@@ -1043,8 +1083,58 @@ function renderSettingsTab() {
   // login gate for anyone without a currentUserId, so this is always either
   // a LIFF identity or a logged-in web (ext+password) identity.
   return renderMemberSettings(state.currentUserId)
+    + renderWebAccessCard(state.currentUserId)
     + (!state.liffReady ? renderChangePasswordCard() : "")
     + renderMemberManagement();
+}
+
+// 讓每個人自己登記「分機＋Email」，之後開啟電腦版就能直接用分機＋密碼登入，
+// 不需要再回頭改 STAFF_DIRECTORY 或請人手動處理——新人加入時這一步就能自己做完。
+function renderWebAccessCard(id) {
+  const d = state.memberData[id] || {};
+  return `
+    <div class="card">
+      <h3 class="section-h">電腦版登入資料</h3>
+      <div class="hint">填寫分機與 Email 後，之後在電腦（非 LINE）開啟本系統時就能直接用分機＋密碼登入；忘記密碼時，新密碼也會寄到這裡。</div>
+      ${state.webAccessError ? `<div class="warn-banner">${state.webAccessError}</div>` : ""}
+      ${state.webAccessSuccess ? `<div class="hint" style="color:var(--wfh); font-weight:600;">已儲存</div>` : ""}
+      <label class="field-label" style="margin-top:10px;">公司 Email</label>
+      <input type="text" id="web-access-email" value="${d.email || ''}" placeholder="例如：name@transglobe.com.tw" style="width:100%;" />
+      <label class="field-label" style="margin-top:10px;">分機號碼</label>
+      <input type="text" inputmode="numeric" id="web-access-ext" value="${d.ext || ''}" placeholder="例如：2108" style="width:100%;" />
+      <button class="btn secondary" id="save-web-access-btn" style="width:100%; margin-top:10px;">儲存</button>
+    </div>
+  `;
+}
+
+async function handleSaveWebAccess() {
+  const id = state.currentUserId;
+  const email = document.getElementById("web-access-email").value.trim();
+  const ext = document.getElementById("web-access-ext").value.trim();
+  state.webAccessSuccess = false;
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    state.webAccessError = "Email 格式不正確。";
+    render();
+    return;
+  }
+  if (!/^[0-9]{2,6}$/.test(ext)) {
+    state.webAccessError = "分機號碼請輸入數字。";
+    render();
+    return;
+  }
+  const clash = state.members.find(mid => mid !== id && state.memberData[mid] && state.memberData[mid].ext === ext);
+  if (clash) {
+    state.webAccessError = `分機 ${ext} 已經被「${state.memberData[clash].displayName || clash}」登記過了，請確認號碼是否正確。`;
+    render();
+    return;
+  }
+  state.memberData[id].ext = ext;
+  state.memberData[id].email = email;
+  state.webAccessError = "";
+  state.webAccessSuccess = true;
+  render();
+  await saveAll();
+  render();
 }
 
 function renderChangePasswordCard() {
@@ -1053,9 +1143,9 @@ function renderChangePasswordCard() {
       <h3 class="section-h">修改密碼</h3>
       ${state.changePwError ? `<div class="warn-banner">${state.changePwError}</div>` : ""}
       ${state.changePwSuccess ? `<div class="hint" style="color:var(--wfh); font-weight:600;">密碼已更新</div>` : ""}
-      <input type="password" id="change-pw-old" placeholder="目前密碼" style="width:100%;" />
-      <input type="password" id="change-pw-new1" placeholder="新密碼（4～12碼）" style="width:100%; margin-top:8px;" />
-      <input type="password" id="change-pw-new2" placeholder="再輸入一次新密碼" style="width:100%; margin-top:8px;" />
+      ${pwFieldHtml("change-pw-old", "目前密碼")}
+      ${pwFieldHtml("change-pw-new1", "新密碼（4～12碼）", "margin-top:8px;")}
+      ${pwFieldHtml("change-pw-new2", "再輸入一次新密碼", "margin-top:8px;")}
       <button class="btn secondary" id="change-pw-btn" style="width:100%; margin-top:10px;">更新密碼</button>
       <button class="btn danger" id="web-logout-btn" style="width:100%; margin-top:18px;">登出</button>
     </div>
@@ -1280,6 +1370,7 @@ function renderMemberSettings(id) {
 }
 
 function bindEvents() {
+  bindPasswordToggles();
   document.querySelectorAll(".tab").forEach(el => {
     el.onclick = () => { state.tab = el.dataset.tab; state.selectedDay = null; render(); };
   });
@@ -1317,6 +1408,9 @@ function bindEvents() {
 
   const changePwBtn = document.getElementById("change-pw-btn");
   if (changePwBtn) changePwBtn.onclick = () => handleChangePassword();
+
+  const saveWebAccessBtn = document.getElementById("save-web-access-btn");
+  if (saveWebAccessBtn) saveWebAccessBtn.onclick = () => handleSaveWebAccess();
 
   const logoutBtn = document.getElementById("web-logout-btn");
   if (logoutBtn) logoutBtn.onclick = () => {
