@@ -126,9 +126,11 @@
   .pw-field input { width: 100%; padding-right: 40px; }
   .pw-field .pw-toggle {
     position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
-    background: none; border: none; cursor: pointer; font-size: 16px; line-height: 1;
+    background: none; border: none; cursor: pointer; line-height: 1;
     color: var(--muted); padding: 8px; min-height: auto;
+    display: flex; align-items: center; justify-content: center;
   }
+  .pw-field .pw-toggle svg { width: 20px; height: 14px; display: block; }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
   .wd-toggle-row, .q-toggle-row { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
   .wd-toggle, .q-toggle {
@@ -330,6 +332,8 @@ let state = {
   webLogin: { step: "ext", ext: "", matchedId: null, matchedName: "", error: "" },
   changePwError: "",
   changePwSuccess: false,
+  settingsForgotError: "",
+  settingsForgotSent: false,
   webAccessError: "",
   webAccessSuccess: false,
 };
@@ -431,11 +435,16 @@ async function enterWebLoginMode() {
 }
 
 // ---- 共用：可切換顯示/隱藏的密碼輸入框 ----
+// 用簡單的線條圖示（張眼／閉眼）取代表情符號，避免不同裝置顯示成奇怪的彩色 emoji。
+// 預設是看不到密碼（閉眼），按下後才變成看得到（張眼，此時再按一次會改回隱藏）。
+const EYE_OPEN_SVG = `<svg viewBox="0 0 32 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 10C1 10 7 2 16 2s15 8 15 8-6 8-15 8S1 10 1 10z"/><circle cx="16" cy="10" r="4" fill="currentColor" stroke="none"/></svg>`;
+const EYE_CLOSED_SVG = `<svg viewBox="0 0 32 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10C2 10 8 14 16 14s14-4 14-4"/><line x1="6" y1="13" x2="5" y2="16"/><line x1="11" y1="15" x2="10.5" y2="18"/><line x1="16" y1="15.5" x2="16" y2="18.5"/><line x1="21" y1="15" x2="21.5" y2="18"/><line x1="26" y1="13" x2="27" y2="16"/></svg>`;
+
 function pwFieldHtml(id, placeholder, wrapperStyle) {
   return `
     <div class="pw-field" style="${wrapperStyle || ''}">
       <input type="password" id="${id}" placeholder="${placeholder}" />
-      <button type="button" class="pw-toggle" data-pw-toggle="${id}" aria-label="顯示密碼">👁</button>
+      <button type="button" class="pw-toggle" data-pw-toggle="${id}" aria-label="顯示密碼">${EYE_CLOSED_SVG}</button>
     </div>
   `;
 }
@@ -444,9 +453,10 @@ function bindPasswordToggles() {
     el.onclick = () => {
       const input = document.getElementById(el.dataset.pwToggle);
       if (!input) return;
-      const show = input.type === "password";
-      input.type = show ? "text" : "password";
-      el.textContent = show ? "🙈" : "👁";
+      const willShow = input.type === "password";
+      input.type = willShow ? "text" : "password";
+      el.innerHTML = willShow ? EYE_OPEN_SVG : EYE_CLOSED_SVG;
+      el.setAttribute("aria-label", willShow ? "隱藏密碼" : "顯示密碼");
     };
   });
 }
@@ -1161,10 +1171,15 @@ function renderChangePasswordCard() {
       <h3 class="section-h">修改密碼</h3>
       ${state.changePwError ? `<div class="warn-banner">${state.changePwError}</div>` : ""}
       ${state.changePwSuccess ? `<div class="hint" style="color:var(--wfh); font-weight:600;">密碼已更新</div>` : ""}
+      ${state.settingsForgotError ? `<div class="warn-banner">${state.settingsForgotError}</div>` : ""}
+      ${state.settingsForgotSent ? `<div class="hint" style="color:var(--wfh); font-weight:600;">新密碼已寄到你登記的 Email，請查收後用新密碼重新登入。</div>` : ""}
       ${pwFieldHtml("change-pw-old", "目前密碼")}
       ${pwFieldHtml("change-pw-new1", "新密碼（4～12碼）", "margin-top:8px;")}
       ${pwFieldHtml("change-pw-new2", "再輸入一次新密碼", "margin-top:8px;")}
-      <button class="btn secondary" id="change-pw-btn" style="width:100%; margin-top:10px;">更新密碼</button>
+      <div class="row" style="margin-top:10px; align-items:center;">
+        <button class="btn secondary" id="change-pw-btn" style="flex:1;">更新密碼</button>
+        <a href="#" id="settings-forgot-link" style="font-size:13px; color:var(--muted); white-space:nowrap;">忘記密碼？</a>
+      </div>
     </div>
   `;
 }
@@ -1197,8 +1212,43 @@ async function handleChangePassword() {
   d.passwordHash = await hashPassword(new1, salt);
   state.changePwError = "";
   state.changePwSuccess = true;
+  state.settingsForgotError = "";
+  state.settingsForgotSent = false;
   render();
   await saveAll();
+  render();
+}
+
+// 已登入的使用者如果忘記「目前密碼」，用這個直接寄一組新的臨時密碼到自己登記的 Email，
+// 跟登入畫面上的「忘記密碼」邏輯一致，只是對象改成目前已登入的這個人。
+async function handleSettingsForgotPassword() {
+  const id = state.currentUserId;
+  const d = state.memberData[id];
+  state.changePwError = "";
+  state.changePwSuccess = false;
+  state.settingsForgotSent = false;
+  const fallback = staffDirectoryLookupByName(d.displayName);
+  const email = d.email || (fallback && fallback.email);
+  const name = d.displayName || id;
+  if (!email) {
+    state.settingsForgotError = "查無你登記的 Email，請先在上方「電腦版登入資料」填寫並儲存 Email 後再試一次。";
+    render();
+    return;
+  }
+  const tempPw = randomTempPassword();
+  const salt = randomHex(8);
+  const hash = await hashPassword(tempPw, salt);
+  d.passwordSalt = salt;
+  d.passwordHash = hash;
+  await saveAll();
+  const ok = await sendResetEmail(email, name, tempPw);
+  if (!ok) {
+    state.settingsForgotError = "密碼已重設，但信件寄送失敗，請直接聯絡管理者取得新密碼，或確認網路連線後再試一次。";
+    render();
+    return;
+  }
+  state.settingsForgotError = "";
+  state.settingsForgotSent = true;
   render();
 }
 
@@ -1425,6 +1475,9 @@ function bindEvents() {
 
   const changePwBtn = document.getElementById("change-pw-btn");
   if (changePwBtn) changePwBtn.onclick = () => handleChangePassword();
+
+  const settingsForgotLink = document.getElementById("settings-forgot-link");
+  if (settingsForgotLink) settingsForgotLink.onclick = (e) => { e.preventDefault(); handleSettingsForgotPassword(); };
 
   const saveWebAccessBtn = document.getElementById("save-web-access-btn");
   if (saveWebAccessBtn) saveWebAccessBtn.onclick = () => handleSaveWebAccess();
