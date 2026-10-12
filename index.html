@@ -914,8 +914,9 @@ function render() {
   if (!state.loaded) { app.innerHTML = '<div class="loading">載入中…</div>'; return; }
   if (!state.liffReady && !state.currentUserId) { renderWebLoginGate(); return; }
 
+  const canLogout = !state.liffReady && !!state.currentUserId;
   const whoamiHtml = state.currentUserId
-    ? `<div class="whoami">${state.currentUserPicture ? `<img src="${state.currentUserPicture}">` : ""}${state.currentUserName}</div>`
+    ? `<div class="whoami">${state.currentUserPicture ? `<img src="${state.currentUserPicture}">` : ""}<span>${state.currentUserName}</span>${canLogout ? `<button class="btn danger" id="top-logout-btn" style="padding:4px 10px; font-size:12px; min-height:auto;">登出</button>` : ""}</div>`
     : "";
 
   const html = `
@@ -1078,6 +1079,13 @@ function renderDayDetail(dateStr) {
   `;
 }
 
+// 成員管理（移除同仁資料）只開放給 Rachel 和 Catherine，其他人登入後看不到這一區。
+const ADMIN_DISPLAY_NAMES = ["Rachel", "Catherine"];
+function isAdminUser(id) {
+  const d = state.memberData[id];
+  return !!d && ADMIN_DISPLAY_NAMES.includes(d.displayName);
+}
+
 function renderSettingsTab() {
   // By the time this tab can render, render() has already redirected to the
   // login gate for anyone without a currentUserId, so this is always either
@@ -1085,23 +1093,33 @@ function renderSettingsTab() {
   return renderMemberSettings(state.currentUserId)
     + renderWebAccessCard(state.currentUserId)
     + (!state.liffReady ? renderChangePasswordCard() : "")
-    + renderMemberManagement();
+    + (isAdminUser(state.currentUserId) ? renderMemberManagement() : "");
 }
 
-// 讓每個人自己登記「分機＋Email」，之後開啟電腦版就能直接用分機＋密碼登入，
-// 不需要再回頭改 STAFF_DIRECTORY 或請人手動處理——新人加入時這一步就能自己做完。
+// 以顯示名稱比對 STAFF_DIRECTORY，找出這個人原本就有的分機／Email（Excel 裡既有的資料），
+// 用來在還沒自己存過電腦版登入資料時先帶出來，不用重新輸入；只有真的查不到的新人才要自己補填。
+function staffDirectoryLookupByName(displayName) {
+  for (const [ext, entry] of Object.entries(STAFF_DIRECTORY)) {
+    if (entry.name === displayName) return { ext, email: entry.email };
+  }
+  return null;
+}
+
 function renderWebAccessCard(id) {
   const d = state.memberData[id] || {};
+  const fallback = (!d.email || !d.ext) ? (staffDirectoryLookupByName(d.displayName) || {}) : {};
+  const emailVal = d.email || fallback.email || "";
+  const extVal = d.ext || fallback.ext || "";
   return `
     <div class="card">
       <h3 class="section-h">電腦版登入資料</h3>
-      <div class="hint">填寫分機與 Email 後，之後在電腦（非 LINE）開啟本系統時就能直接用分機＋密碼登入；忘記密碼時，新密碼也會寄到這裡。</div>
+      <div class="hint">填寫分機與 Email 後，之後在電腦（非 LINE）開啟本系統時就能直接用分機＋密碼登入；忘記密碼時，新密碼也會寄到這裡。已經登記過的同仁會自動帶出原本的資料，確認沒問題按「儲存」即可；新加入的同仁才需要自己輸入。</div>
       ${state.webAccessError ? `<div class="warn-banner">${state.webAccessError}</div>` : ""}
       ${state.webAccessSuccess ? `<div class="hint" style="color:var(--wfh); font-weight:600;">已儲存</div>` : ""}
       <label class="field-label" style="margin-top:10px;">公司 Email</label>
-      <input type="text" id="web-access-email" value="${d.email || ''}" placeholder="例如：name@transglobe.com.tw" style="width:100%;" />
+      <input type="text" id="web-access-email" value="${emailVal}" placeholder="例如：name@transglobe.com.tw" style="width:100%;" />
       <label class="field-label" style="margin-top:10px;">分機號碼</label>
-      <input type="text" inputmode="numeric" id="web-access-ext" value="${d.ext || ''}" placeholder="例如：2108" style="width:100%;" />
+      <input type="text" inputmode="numeric" id="web-access-ext" value="${extVal}" placeholder="例如：2108" style="width:100%;" />
       <button class="btn secondary" id="save-web-access-btn" style="width:100%; margin-top:10px;">儲存</button>
     </div>
   `;
@@ -1147,7 +1165,6 @@ function renderChangePasswordCard() {
       ${pwFieldHtml("change-pw-new1", "新密碼（4～12碼）", "margin-top:8px;")}
       ${pwFieldHtml("change-pw-new2", "再輸入一次新密碼", "margin-top:8px;")}
       <button class="btn secondary" id="change-pw-btn" style="width:100%; margin-top:10px;">更新密碼</button>
-      <button class="btn danger" id="web-logout-btn" style="width:100%; margin-top:18px;">登出</button>
     </div>
   `;
 }
@@ -1412,7 +1429,7 @@ function bindEvents() {
   const saveWebAccessBtn = document.getElementById("save-web-access-btn");
   if (saveWebAccessBtn) saveWebAccessBtn.onclick = () => handleSaveWebAccess();
 
-  const logoutBtn = document.getElementById("web-logout-btn");
+  const logoutBtn = document.getElementById("top-logout-btn");
   if (logoutBtn) logoutBtn.onclick = () => {
     try { localStorage.removeItem("attendance_web_session_id"); } catch (e) {}
     state.currentUserId = "";
