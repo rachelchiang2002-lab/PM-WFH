@@ -5,6 +5,9 @@
 <script>
   const LIFF_ID = "2011478484-krfYEfBj"; // 例如 "1234567890-AbCdEfGh"
   const FIREBASE_URL = "https://pm-wfh-default-rtdb.asia-southeast1.firebasedatabase.app/data.json"; // Firebase Realtime Database 的資料網址
+  const FIREBASE_API_KEY = "AIzaSyASR6R37tvv3rwOZVBh6odx5NNB59LfUPc";
+  const MAIL_ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbyDHzOom7XZ2K3oSzu3sZ4PW3oTzpXSYNsFJ1H3c147wlwz3VMgab1-p93671H3aH7lcg/exec";
+  const MAIL_SECRET = "x7Qp2vR9mK4wL8sT";
 </script>
 <!-- ========================================================================= -->
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
@@ -115,7 +118,7 @@
   .empty-note { color: var(--muted); font-size: 13.5px; }
 
   label.field-label { font-size: 13px; color: var(--muted); font-weight: 600; display: block; margin-bottom: 6px; }
-  select, input[type="date"], input[type="text"] {
+  select, input[type="date"], input[type="text"], input[type="password"], input[type="time"] {
     font-family: inherit; font-size: 16px; padding: 10px 12px; border: 1px solid var(--border);
     border-radius: 8px; background: #fff; color: var(--ink); min-height: 44px;
   }
@@ -188,6 +191,101 @@ function holidayName(dateStr) {
   return h ? h.join("、") : null;
 }
 
+// 電腦版登入用：分機 -> 登記名稱 / Email 對照表（來源：部門人員清單 Excel）
+// 這份清單只用來做「第一次登入時帶出姓名」與「忘記密碼寄信」，跟 Firebase 裡實際的出勤資料是分開的。
+const STAFF_DIRECTORY = {
+  "2108": { name: "Rachel", email: "rachelchiang@transglobe.com.tw" },
+  "6519": { name: "Emily", email: "EmilyLeeYR@transglobe.com.tw" },
+  "2504": { name: "Albee", email: "AlbeeHuang@transglobe.com.tw" },
+  "2580": { name: "Catherine", email: "CatherineWang@transglobe.com.tw" },
+  "6529": { name: "安先", email: "LunaChang@transglobe.com.tw" },
+  "6525": { name: "Peter You", email: "peteryou@transglobe.com.tw" },
+  "2919": { name: "Danny", email: "DannyLee@transglobe.com.tw" },
+  "2585": { name: "Bonnie", email: "BonnieTsai@transglobe.com.tw" },
+  "6516": { name: "Astrid", email: "AstridTsai@transglobe.com.tw" },
+  "2712": { name: "Yoyo", email: "YoYoRen@transglobe.com.tw" },
+  "2709": { name: "julie chen", email: "juliechen@transglobe.com.tw" },
+  "2559": { name: "Vic", email: "vicwang@transglobe.com.tw" },
+  "2337": { name: "Ellie", email: "elliechen@transglobe.com.tw" },
+  "2322": { name: "Amanda", email: "amandahuangyc@transglobe.com.tw" },
+  "2335": { name: "Joan", email: "JoanHsieh@transglobe.com.tw" },
+  "2973": { name: "Marco", email: "marcowu@transglobe.com.tw" },
+  "2566": { name: "Jarvis", email: "JarvisChang@transglobe.com.tw" },
+  "2514": { name: "Eric Tsai", email: "EricTsai@transglobe.com.tw" },
+};
+
+// ---- Firebase 匿名驗證（讓前端能拿到可以讀寫資料的憑證，而不是任何人拿到網址就能讀寫）----
+let firebaseIdToken = null;
+async function ensureFirebaseAuth(forceRefresh) {
+  if (firebaseIdToken && !forceRefresh) return firebaseIdToken;
+  const configured = FIREBASE_API_KEY && FIREBASE_API_KEY !== "YOUR_FIREBASE_WEB_API_KEY";
+  if (!configured) return null; // 還沒設定金鑰時略過，退回原本（未鎖權限）的行為，不擋住使用
+  try {
+    const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${FIREBASE_API_KEY}`, {
+      method: "POST",
+      body: JSON.stringify({ returnSecureToken: true })
+    });
+    const data = await res.json();
+    if (data && data.idToken) { firebaseIdToken = data.idToken; return firebaseIdToken; }
+  } catch (e) {
+    console.error("Firebase 匿名驗證失敗", e);
+  }
+  return null;
+}
+function withAuth(url) {
+  return firebaseIdToken ? `${url}${url.includes("?") ? "&" : "?"}auth=${firebaseIdToken}` : url;
+}
+
+// ---- 密碼雜湊工具（SHA-256 + 每人各自的 salt，密碼本身不會直接存放）----
+function randomHex(byteLen) {
+  const arr = new Uint8Array(byteLen);
+  crypto.getRandomValues(arr);
+  return Array.from(arr).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+async function sha256Hex(str) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+}
+async function hashPassword(password, salt) {
+  return sha256Hex(`${salt}:${password}`);
+}
+function isValidPassword(pw) {
+  return typeof pw === "string" && pw.length >= 4 && pw.length <= 12;
+}
+function randomTempPassword() {
+  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // 避開容易混淆的 0/O/1/I
+  let s = "";
+  for (let i = 0; i < 8; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+function findMemberIdByExt(ext) {
+  for (const id of state.members) {
+    if (state.memberData[id] && state.memberData[id].ext === ext) return id;
+  }
+  const entry = STAFF_DIRECTORY[ext];
+  if (!entry) return null;
+  for (const id of state.members) {
+    const md = state.memberData[id];
+    if (md && !md.ext && md.displayName === entry.name) return id;
+  }
+  return null;
+}
+async function sendResetEmail(email, name, tempPassword) {
+  const configured = MAIL_ENDPOINT_URL && MAIL_ENDPOINT_URL !== "YOUR_APPS_SCRIPT_MAIL_URL_HERE";
+  if (!configured) return false;
+  try {
+    const res = await fetch(MAIL_ENDPOINT_URL, {
+      method: "POST",
+      body: JSON.stringify({ secret: MAIL_SECRET, email, name, tempPassword })
+    });
+    const data = await res.json();
+    return !!(data && data.ok);
+  } catch (e) {
+    console.error("sendResetEmail failed", e);
+    return false;
+  }
+}
+
 let state = {
   loaded: false,
   liffReady: false,
@@ -202,7 +300,6 @@ let state = {
   dayCursor: startOfDay(new Date()),
   monthCursor: startOfMonth(new Date()),
   selectedDay: null,
-  newUserInput: "",
   leaveStart: "",
   leaveEnd: "",
   leaveStartTime: "",
@@ -218,6 +315,9 @@ let state = {
   quotaWarning: false,
   saveError: null,
   loadError: null,
+  webLogin: { step: "ext", ext: "", matchedId: null, matchedName: "", error: "" },
+  changePwError: "",
+  changePwSuccess: false,
 };
 
 function startOfMonth(d) { return new Date(d.getFullYear(), d.getMonth(), 1); }
@@ -244,15 +344,16 @@ function statusWithTime(status, time) {
 }
 
 async function bootstrap() {
+  await ensureFirebaseAuth();
   const liffConfigured = LIFF_ID && LIFF_ID !== "YOUR_LIFF_ID_HERE";
   if (!liffConfigured) {
-    state.liffError = "尚未設定 LIFF_ID，目前是測試模式，請手動輸入姓名。部署到 LINE 後會自動改為自動登入。";
-    await loadAll();
+    state.liffError = "尚未設定 LIFF_ID，目前是測試模式，請用電腦版分機登入。部署到 LINE 後會自動改為自動登入。";
+    renderLoginChoice();
     return;
   }
   if (!window.liff) {
-    state.liffError = "LINE 登入元件載入失敗，暫時切換為手動選擇姓名模式。";
-    await loadAll();
+    state.liffError = "LINE 登入元件載入失敗，請改用電腦版分機登入。";
+    renderLoginChoice();
     return;
   }
   try {
@@ -262,8 +363,8 @@ async function bootstrap() {
     ]);
   } catch (e) {
     console.error("LIFF init failed", e);
-    state.liffError = "LINE 登入初始化失敗或逾時，暫時切換為手動選擇姓名模式。";
-    await loadAll();
+    state.liffError = "LINE 登入初始化失敗或逾時，請改用電腦版分機登入。";
+    renderLoginChoice();
     return;
   }
   if (liff.isLoggedIn()) {
@@ -292,16 +393,228 @@ function renderLoginChoice() {
   app.innerHTML = `
     <div style="max-width:360px; margin:60px auto; text-align:center; padding:0 16px;">
       <h2 style="margin-bottom:6px; font-size:19px;">部門出勤總覽</h2>
+      ${state.liffError ? `<div class="warn-banner" style="text-align:left;">${state.liffError}</div>` : ""}
       <p style="color:var(--muted); font-size:13.5px; margin-bottom:24px;">選擇登入方式</p>
       <button class="btn" id="line-login-btn" style="width:100%; margin-bottom:10px;">使用 LINE 登入</button>
-      <button class="btn secondary" id="manual-login-btn" style="width:100%;">不使用 LINE，直接輸入姓名</button>
+      <button class="btn secondary" id="manual-login-btn" style="width:100%;">電腦版登入（分機＋密碼）</button>
     </div>
   `;
   document.getElementById("line-login-btn").onclick = () => { liff.login(); };
-  document.getElementById("manual-login-btn").onclick = async () => {
-    state.liffReady = false;
-    await loadAll();
+  document.getElementById("manual-login-btn").onclick = async () => { await enterWebLoginMode(); };
+}
+
+async function enterWebLoginMode() {
+  state.liffReady = false;
+  await loadAll();
+  let savedId = null;
+  try { savedId = localStorage.getItem("attendance_web_session_id"); } catch (e) {}
+  if (savedId && state.members.includes(savedId) && state.memberData[savedId]) {
+    state.currentUserId = savedId;
+    state.currentUserName = state.memberData[savedId].displayName || savedId;
+  }
+  state.webLogin = { step: "ext", ext: "", matchedId: null, matchedName: "", error: "" };
+  render();
+}
+
+// ---- 電腦版：分機 + 密碼登入畫面 ----
+function renderWebLoginGate() {
+  const app = document.getElementById("app");
+  const w = state.webLogin;
+  const errHtml = w.error ? `<div class="warn-banner">${w.error}</div>` : "";
+  let body = "";
+
+  if (w.step === "ext") {
+    body = `
+      <h3 class="section-h">電腦版登入</h3>
+      <div class="hint" style="margin-bottom:10px;">請輸入您的分機號碼</div>
+      ${errHtml}
+      <input type="text" inputmode="numeric" id="web-ext-input" placeholder="例如：2108" value="${w.ext}" style="width:100%;" />
+      <button class="btn" id="web-ext-next-btn" style="width:100%; margin-top:12px;">下一步</button>
+      <button class="btn secondary" id="web-back-to-choice-btn" style="width:100%; margin-top:8px;">返回</button>
+    `;
+  } else if (w.step === "blocked") {
+    body = `
+      <h3 class="section-h">尚未啟用電腦版</h3>
+      <div class="hint">${w.matchedName} 您好，系統裡還沒有您的登記資料，請先透過手機 LINE 開啟本系統登入過一次，電腦版才能使用密碼登入。</div>
+      <button class="btn secondary" id="web-back-to-ext-btn" style="width:100%; margin-top:14px;">返回</button>
+    `;
+  } else if (w.step === "setpw") {
+    body = `
+      <h3 class="section-h">初次使用，請設定密碼</h3>
+      <div class="hint" style="margin-bottom:10px;">${w.matchedName} 您好，請設定登入密碼（4～12 碼，英數符號不限）</div>
+      ${errHtml}
+      <input type="password" id="web-setpw-1" placeholder="新密碼" style="width:100%;" />
+      <input type="password" id="web-setpw-2" placeholder="再輸入一次新密碼" style="width:100%; margin-top:8px;" />
+      <button class="btn" id="web-setpw-confirm-btn" style="width:100%; margin-top:12px;">設定並登入</button>
+      <button class="btn secondary" id="web-back-to-ext-btn" style="width:100%; margin-top:8px;">返回</button>
+    `;
+  } else if (w.step === "password") {
+    body = `
+      <h3 class="section-h">${w.matchedName}，歡迎回來</h3>
+      ${errHtml}
+      <input type="password" id="web-pw-input" placeholder="密碼" style="width:100%;" />
+      <button class="btn" id="web-pw-login-btn" style="width:100%; margin-top:12px;">登入</button>
+      <div style="text-align:center; margin-top:12px;">
+        <a href="#" id="web-forgot-link" style="font-size:13px; color:var(--muted);">忘記密碼？</a>
+      </div>
+      <button class="btn secondary" id="web-back-to-ext-btn" style="width:100%; margin-top:8px;">返回</button>
+    `;
+  } else if (w.step === "forgot") {
+    const entry = STAFF_DIRECTORY[w.ext];
+    const email = entry ? entry.email : "";
+    body = `
+      <h3 class="section-h">重設密碼</h3>
+      <div class="hint">將寄送一組新的臨時密碼到：${email}</div>
+      ${errHtml}
+      <button class="btn" id="web-forgot-send-btn" style="width:100%; margin-top:12px;">寄送臨時密碼</button>
+      <button class="btn secondary" id="web-back-to-ext-btn" style="width:100%; margin-top:8px;">返回</button>
+    `;
+  } else if (w.step === "forgot-sent") {
+    body = `
+      <h3 class="section-h">已寄出</h3>
+      <div class="hint">臨時密碼已寄到您的 Email，請查收後用新密碼登入，登入後建議立即到「我的設定」改成自己的密碼。</div>
+      <button class="btn" id="web-back-to-ext-btn" style="width:100%; margin-top:14px;">返回登入</button>
+    `;
+  }
+
+  app.innerHTML = `
+    <div class="card" style="max-width:360px; margin:50px auto; padding:20px;">${body}</div>
+  `;
+  bindWebLoginEvents();
+}
+
+function bindWebLoginEvents() {
+  const extInput = document.getElementById("web-ext-input");
+  if (extInput) {
+    extInput.oninput = (e) => { state.webLogin.ext = e.target.value.trim(); };
+    extInput.onkeydown = (e) => { if (e.key === "Enter") handleExtSubmit(); };
+    extInput.focus();
+  }
+  const nextBtn = document.getElementById("web-ext-next-btn");
+  if (nextBtn) nextBtn.onclick = () => handleExtSubmit();
+
+  const backChoice = document.getElementById("web-back-to-choice-btn");
+  if (backChoice) backChoice.onclick = () => { renderLoginChoice(); };
+
+  const backExt = document.getElementById("web-back-to-ext-btn");
+  if (backExt) backExt.onclick = () => {
+    state.webLogin = { step: "ext", ext: "", matchedId: null, matchedName: "", error: "" };
+    render();
   };
+
+  const setpwBtn = document.getElementById("web-setpw-confirm-btn");
+  if (setpwBtn) setpwBtn.onclick = () => handleSetPasswordSubmit();
+
+  const pwInput = document.getElementById("web-pw-input");
+  if (pwInput) {
+    pwInput.onkeydown = (e) => { if (e.key === "Enter") handlePasswordSubmit(); };
+    pwInput.focus();
+  }
+  const pwLoginBtn = document.getElementById("web-pw-login-btn");
+  if (pwLoginBtn) pwLoginBtn.onclick = () => handlePasswordSubmit();
+
+  const forgotLink = document.getElementById("web-forgot-link");
+  if (forgotLink) forgotLink.onclick = (e) => { e.preventDefault(); state.webLogin.step = "forgot"; state.webLogin.error = ""; render(); };
+
+  const forgotSendBtn = document.getElementById("web-forgot-send-btn");
+  if (forgotSendBtn) forgotSendBtn.onclick = () => handleForgotSubmit();
+}
+
+async function handleExtSubmit() {
+  const ext = state.webLogin.ext.trim();
+  const entry = STAFF_DIRECTORY[ext];
+  if (!entry) {
+    state.webLogin.error = "查無此分機，請確認輸入是否正確。";
+    render();
+    return;
+  }
+  const id = findMemberIdByExt(ext);
+  if (!id) {
+    state.webLogin.step = "blocked";
+    state.webLogin.matchedName = entry.name;
+    state.webLogin.error = "";
+    render();
+    return;
+  }
+  state.webLogin.matchedId = id;
+  state.webLogin.matchedName = state.memberData[id].displayName || entry.name;
+  state.webLogin.error = "";
+  const hasPw = !!state.memberData[id].passwordHash;
+  state.webLogin.step = hasPw ? "password" : "setpw";
+  render();
+}
+
+async function handleSetPasswordSubmit() {
+  const pw1 = document.getElementById("web-setpw-1").value;
+  const pw2 = document.getElementById("web-setpw-2").value;
+  if (!isValidPassword(pw1)) {
+    state.webLogin.error = "密碼長度需為 4～12 碼。";
+    render();
+    return;
+  }
+  if (pw1 !== pw2) {
+    state.webLogin.error = "兩次輸入的密碼不一致。";
+    render();
+    return;
+  }
+  const id = state.webLogin.matchedId;
+  const ext = state.webLogin.ext;
+  const salt = randomHex(8);
+  const hash = await hashPassword(pw1, salt);
+  state.memberData[id].passwordSalt = salt;
+  state.memberData[id].passwordHash = hash;
+  state.memberData[id].ext = ext;
+  await saveAll();
+  completeWebLogin(id);
+}
+
+async function handlePasswordSubmit() {
+  const id = state.webLogin.matchedId;
+  const d = state.memberData[id];
+  const pw = document.getElementById("web-pw-input").value;
+  const hash = await hashPassword(pw, d.passwordSalt);
+  if (hash !== d.passwordHash) {
+    state.webLogin.error = "密碼錯誤，請再試一次。";
+    render();
+    return;
+  }
+  if (!d.ext) { d.ext = state.webLogin.ext; await saveAll(); }
+  completeWebLogin(id);
+}
+
+function completeWebLogin(id) {
+  state.currentUserId = id;
+  state.currentUserName = state.memberData[id].displayName || id;
+  state.liffReady = false;
+  try { localStorage.setItem("attendance_web_session_id", id); } catch (e) {}
+  state.webLogin = { step: "ext", ext: "", matchedId: null, matchedName: "", error: "" };
+  render();
+}
+
+async function handleForgotSubmit() {
+  const ext = state.webLogin.ext;
+  const entry = STAFF_DIRECTORY[ext];
+  if (!entry || !entry.email) {
+    state.webLogin.error = "查無對應的 Email，請聯絡管理者協助重設。";
+    render();
+    return;
+  }
+  const id = state.webLogin.matchedId;
+  const tempPw = randomTempPassword();
+  const salt = randomHex(8);
+  const hash = await hashPassword(tempPw, salt);
+  state.memberData[id].passwordSalt = salt;
+  state.memberData[id].passwordHash = hash;
+  await saveAll();
+  const ok = await sendResetEmail(entry.email, entry.name, tempPw);
+  if (!ok) {
+    state.webLogin.error = "密碼已重設，但信件寄送失敗，請直接聯絡管理者取得新密碼，或確認網路連線後再試一次。";
+    render();
+    return;
+  }
+  state.webLogin.step = "forgot-sent";
+  state.webLogin.error = "";
+  render();
 }
 
 async function loadAll() {
@@ -336,7 +649,13 @@ async function loadAll() {
 }
 
 async function loadRemoteData() {
-  const res = await fetch(FIREBASE_URL);
+  await ensureFirebaseAuth();
+  let res = await fetch(withAuth(FIREBASE_URL));
+  if (res.status === 401) {
+    // token expired or not yet obtained — refresh once and retry
+    await ensureFirebaseAuth(true);
+    res = await fetch(withAuth(FIREBASE_URL));
+  }
   if (!res.ok) throw new Error("firebase load failed: " + res.status);
   const data = await res.json();
   return (data && data.members) ? data : { members: [], memberData: {} };
@@ -351,14 +670,24 @@ async function saveAll() {
     return;
   }
   try {
-    const res = await fetch(FIREBASE_URL, {
+    await ensureFirebaseAuth();
+    const body = JSON.stringify({ members: state.members, memberData: state.memberData });
+    let res = await fetch(withAuth(FIREBASE_URL), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ members: state.members, memberData: state.memberData })
+      body
     });
+    if (res.status === 401) {
+      await ensureFirebaseAuth(true);
+      res = await fetch(withAuth(FIREBASE_URL), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body
+      });
+    }
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error("save failed", res.status, body);
+      const errBody = await res.text().catch(() => "");
+      console.error("save failed", res.status, errBody);
       state.saveError = `儲存失敗（狀態碼 ${res.status}），資料可能沒有真的存到雲端。請截圖這則訊息回報。`;
     } else {
       state.saveError = null;
@@ -447,18 +776,6 @@ async function restoreWfh(id, dateStr) {
   render();
 }
 
-// ---- fallback manual registration (used only when LIFF isn't configured yet) ----
-async function addManualMember(name) {
-  name = name.trim();
-  if (!name || state.members.includes(name)) return;
-  state.members.push(name);
-  state.memberData[name] = { displayName: name, quarterlyWFH: {}, overrides: {} };
-  state.currentUserId = name;
-  state.currentUserName = name;
-  render();
-  await saveAll();
-  render();
-}
 
 function buildRangeOverrides_(d, startStr, endStr, startTime, endTime, period, status) {
   const end = endStr || startStr;
@@ -555,8 +872,9 @@ function cancelledWfhEntries(id, daysAhead) {
 function render() {
   const app = document.getElementById("app");
   if (!state.loaded) { app.innerHTML = '<div class="loading">載入中…</div>'; return; }
+  if (!state.liffReady && !state.currentUserId) { renderWebLoginGate(); return; }
 
-  const whoamiHtml = state.liffReady
+  const whoamiHtml = state.currentUserId
     ? `<div class="whoami">${state.currentUserPicture ? `<img src="${state.currentUserPicture}">` : ""}${state.currentUserName}</div>`
     : "";
 
@@ -721,36 +1039,60 @@ function renderDayDetail(dateStr) {
 }
 
 function renderSettingsTab() {
-  // LIFF mode: identity is fixed, jump straight to settings for currentUserId
-  if (state.liffReady && state.currentUserId) {
-    return renderMemberSettings(state.currentUserId) + renderMemberManagement();
-  }
+  // By the time this tab can render, render() has already redirected to the
+  // login gate for anyone without a currentUserId, so this is always either
+  // a LIFF identity or a logged-in web (ext+password) identity.
+  return renderMemberSettings(state.currentUserId)
+    + (!state.liffReady ? renderChangePasswordCard() : "")
+    + renderMemberManagement();
+}
 
-  // Fallback mode: manual name entry / pick existing name
-  if (!state.currentUserId || !state.members.includes(state.currentUserId)) {
-    const memberOptions = state.members.map(id => `<option value="${id}">${state.memberData[id]?.displayName || id}</option>`).join("");
-    return `
-      <div class="card">
-        <h3 class="section-h">（測試模式）選擇你的身分</h3>
-        <div class="row">
-          <div>
-            <label class="field-label">你的姓名</label>
-            <input type="text" id="new-user-input" placeholder="例如：王小明" value="${state.newUserInput}" />
-          </div>
-          <button class="btn" id="add-user-btn">加入名單</button>
-        </div>
-        ${state.members.length > 0 ? `
-          <div style="margin-top:14px;">
-            <label class="field-label">或選擇已存在的名字</label>
-            <select id="pick-user-select">
-              <option value="">請選擇</option>
-              ${memberOptions}
-            </select>
-          </div>` : ""}
-      </div>
-    ` + renderMemberManagement();
+function renderChangePasswordCard() {
+  return `
+    <div class="card">
+      <h3 class="section-h">修改密碼</h3>
+      ${state.changePwError ? `<div class="warn-banner">${state.changePwError}</div>` : ""}
+      ${state.changePwSuccess ? `<div class="hint" style="color:var(--wfh); font-weight:600;">密碼已更新</div>` : ""}
+      <input type="password" id="change-pw-old" placeholder="目前密碼" style="width:100%;" />
+      <input type="password" id="change-pw-new1" placeholder="新密碼（4～12碼）" style="width:100%; margin-top:8px;" />
+      <input type="password" id="change-pw-new2" placeholder="再輸入一次新密碼" style="width:100%; margin-top:8px;" />
+      <button class="btn secondary" id="change-pw-btn" style="width:100%; margin-top:10px;">更新密碼</button>
+      <button class="btn danger" id="web-logout-btn" style="width:100%; margin-top:18px;">登出</button>
+    </div>
+  `;
+}
+
+async function handleChangePassword() {
+  const id = state.currentUserId;
+  const d = state.memberData[id];
+  const oldPw = document.getElementById("change-pw-old").value;
+  const new1 = document.getElementById("change-pw-new1").value;
+  const new2 = document.getElementById("change-pw-new2").value;
+  state.changePwSuccess = false;
+  const oldHash = await hashPassword(oldPw, d.passwordSalt);
+  if (oldHash !== d.passwordHash) {
+    state.changePwError = "目前密碼不正確。";
+    render();
+    return;
   }
-  return renderMemberSettings(state.currentUserId) + renderMemberManagement();
+  if (!isValidPassword(new1)) {
+    state.changePwError = "新密碼長度需為 4～12 碼。";
+    render();
+    return;
+  }
+  if (new1 !== new2) {
+    state.changePwError = "兩次輸入的新密碼不一致。";
+    render();
+    return;
+  }
+  const salt = randomHex(8);
+  d.passwordSalt = salt;
+  d.passwordHash = await hashPassword(new1, salt);
+  state.changePwError = "";
+  state.changePwSuccess = true;
+  render();
+  await saveAll();
+  render();
 }
 
 function renderMemberManagement() {
@@ -785,6 +1127,7 @@ async function removeMember(id) {
   if (state.currentUserId === id) {
     state.currentUserId = "";
     state.currentUserName = "";
+    try { localStorage.removeItem("attendance_web_session_id"); } catch (e) {}
   }
   render();
   await saveAll();
@@ -972,27 +1315,17 @@ function bindEvents() {
     };
   });
 
-  const newUserInput = document.getElementById("new-user-input");
-  if (newUserInput) {
-    newUserInput.oninput = (e) => { state.newUserInput = e.target.value; };
-    newUserInput.onkeydown = (e) => { if (e.key === "Enter") document.getElementById("add-user-btn").click(); };
-  }
-  const addUserBtn = document.getElementById("add-user-btn");
-  if (addUserBtn) {
-    addUserBtn.onclick = async () => {
-      const val = document.getElementById("new-user-input").value;
-      await addManualMember(val);
-      state.newUserInput = "";
-    };
-  }
-  const pickUserSelect = document.getElementById("pick-user-select");
-  if (pickUserSelect) {
-    pickUserSelect.onchange = (e) => {
-      state.currentUserId = e.target.value;
-      state.currentUserName = state.memberData[e.target.value]?.displayName || e.target.value;
-      render();
-    };
-  }
+  const changePwBtn = document.getElementById("change-pw-btn");
+  if (changePwBtn) changePwBtn.onclick = () => handleChangePassword();
+
+  const logoutBtn = document.getElementById("web-logout-btn");
+  if (logoutBtn) logoutBtn.onclick = () => {
+    try { localStorage.removeItem("attendance_web_session_id"); } catch (e) {}
+    state.currentUserId = "";
+    state.currentUserName = "";
+    state.webLogin = { step: "ext", ext: "", matchedId: null, matchedName: "", error: "" };
+    render();
+  };
 
   document.querySelectorAll("[data-wd]").forEach(el => {
     el.onclick = async () => {
