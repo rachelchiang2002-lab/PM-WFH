@@ -67,6 +67,13 @@
   .view-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
   .today-date { font-size: 17px; font-weight: 700; margin-bottom: 12px; }
 
+  .subtabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .subtab {
+    flex: 1; border: 1px solid var(--border); background: var(--card); color: var(--muted);
+    border-radius: 999px; padding: 8px 6px; font-size: 14px; font-weight: 600; cursor: pointer;
+    min-height: 40px; font-family: inherit;
+  }
+  .subtab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
   .card + .card { margin-top: 14px; }
 
@@ -324,6 +331,7 @@ let state = {
   businessStartTime: "",
   businessEndTime: "",
   businessPeriod: null,
+  settingsSubTab: "register",
   settingsYear: new Date().getFullYear(),
   settingsQuarter: Math.floor(new Date().getMonth() / 3) + 1,
   quotaWarning: false,
@@ -401,8 +409,9 @@ async function bootstrap() {
     await loadAll();
     return;
   }
-  // Not logged in yet — offer a choice instead of forcing an immediate LINE-login redirect,
-  // so people who don't want to authorize LINE can still use the app.
+  // 在 LINE App 裡開啟時直接走 LINE 登入，不顯示選擇畫面（選擇畫面只給一般瀏覽器／電腦版使用）。
+  if (liff.isInClient()) { liff.login(); return; }
+  // 一般瀏覽器尚未登入 — 顯示登入方式選擇，讓不想授權 LINE 的人也能用電腦版登入。
   renderLoginChoice();
 }
 
@@ -410,11 +419,11 @@ function renderLoginChoice() {
   const app = document.getElementById("app");
   app.innerHTML = `
     <div style="max-width:360px; margin:60px auto; text-align:center; padding:0 16px;">
-      <h2 style="margin-bottom:6px; font-size:19px;">部門出勤總覽</h2>
+      <h2 style="margin-bottom:6px; font-size:19px;">PM部門出勤總覽</h2>
       ${state.liffError ? `<div class="warn-banner" style="text-align:left;">${state.liffError}</div>` : ""}
       <p style="color:var(--muted); font-size:13.5px; margin-bottom:24px;">選擇登入方式</p>
-      <button class="btn" id="line-login-btn" style="width:100%; margin-bottom:10px;">使用 LINE 登入</button>
-      <button class="btn secondary" id="manual-login-btn" style="width:100%;">電腦版登入（分機＋密碼）</button>
+      <button class="btn" id="manual-login-btn" style="width:100%; margin-bottom:10px; background:#2563eb;">電腦版登入（分機＋密碼）</button>
+      <button class="btn secondary" id="line-login-btn" style="width:100%;">使用 LINE 登入</button>
     </div>
   `;
   document.getElementById("line-login-btn").onclick = () => { liff.login(); };
@@ -1100,10 +1109,27 @@ function renderSettingsTab() {
   // By the time this tab can render, render() has already redirected to the
   // login gate for anyone without a currentUserId, so this is always either
   // a LIFF identity or a logged-in web (ext+password) identity.
-  return renderMemberSettings(state.currentUserId)
-    + renderWebAccessCard(state.currentUserId)
-    + (!state.liffReady ? renderChangePasswordCard() : "")
-    + (isAdminUser(state.currentUserId) ? renderMemberManagement() : "");
+  const id = state.currentUserId;
+  // 子頁籤：登記（居家 > 休假 > 公出）／我的紀錄／帳號／管理（僅 Rachel、Catherine 看得到）
+  const subTabs = [["register", "登記"], ["records", "我的紀錄"], ["account", "帳號"]];
+  if (isAdminUser(id)) subTabs.push(["manage", "管理"]);
+  const sub = subTabs.some(t => t[0] === state.settingsSubTab) ? state.settingsSubTab : "register";
+
+  const bar = `<div class="subtabs">${subTabs.map(([key, label]) =>
+    `<button type="button" class="subtab ${key === sub ? "active" : ""}" data-subtab="${key}">${label}</button>`
+  ).join("")}</div>`;
+
+  let body;
+  if (sub === "account") {
+    body = renderMemberSettings(id, "account")
+      + renderWebAccessCard(id)
+      + (!state.liffReady ? renderChangePasswordCard() : "");
+  } else if (sub === "manage") {
+    body = renderMemberManagement();
+  } else {
+    body = renderMemberSettings(id, sub);
+  }
+  return bar + body;
 }
 
 // 以顯示名稱比對 STAFF_DIRECTORY，找出這個人原本就有的分機／Email（Excel 裡既有的資料），
@@ -1291,7 +1317,7 @@ async function removeMember(id) {
   render();
 }
 
-function renderMemberSettings(id) {
+function renderMemberSettings(id, sub) {
   const d = state.memberData[id];
   const year = state.settingsYear;
   const quarter = state.settingsQuarter;
@@ -1305,7 +1331,7 @@ function renderMemberSettings(id) {
   const cancelledWfh = cancelledWfhEntries(id, 90);
   const yearOptions = [year, year + 1].map(y => `<option value="${y}" ${y === year ? "selected" : ""}>${y}</option>`).join("");
 
-  return `
+  const nameCard = `
     <div class="card">
       <h3 class="section-h">顯示名稱</h3>
       <div class="row">
@@ -1316,7 +1342,8 @@ function renderMemberSettings(id) {
         <button class="btn secondary" id="save-name-btn">儲存</button>
       </div>
     </div>
-
+  `;
+  const wfhCard = `
     <div class="card">
       <h3 class="section-h">居家辦公申請（每季）</h3>
       <div class="hint">選好季度後勾選每週固定居家的星期，最多 2 天，該季（${qMonthsLabel}）就會自動套用</div>
@@ -1349,7 +1376,8 @@ function renderMemberSettings(id) {
         </div>
       ` : ""}
     </div>
-
+  `;
+  const leaveCard = `
     <div class="card">
       <h3 class="section-h">登記休假</h3>
       <div class="row">
@@ -1380,7 +1408,8 @@ function renderMemberSettings(id) {
       </div>
       <button class="btn leave-btn" id="add-leave-btn" style="margin-top:12px;">新增休假</button>
     </div>
-
+  `;
+  const businessCard = `
     <div class="card">
       <h3 class="section-h">登記公出</h3>
       <div class="row">
@@ -1411,7 +1440,8 @@ function renderMemberSettings(id) {
       </div>
       <button class="btn business-btn" id="add-business-btn" style="margin-top:12px;">新增公出</button>
     </div>
-
+  `;
+  const recordsCard = `
     <div class="card">
       <h3 class="section-h">我的登記（未來 90 天）</h3>
       <div class="hint">臨時有事想取消，點右邊「取消」即可；取消居家後還想恢復，可以再點「恢復居家」</div>
@@ -1433,11 +1463,18 @@ function renderMemberSettings(id) {
         </div>`;
       })()}
     </div>
+
   `;
+  if (sub === "register") return wfhCard + leaveCard + businessCard;
+  if (sub === "records") return recordsCard;
+  return nameCard; // "account"
 }
 
 function bindEvents() {
   bindPasswordToggles();
+  document.querySelectorAll("[data-subtab]").forEach(el => {
+    el.onclick = () => { state.settingsSubTab = el.dataset.subtab; render(); };
+  });
   document.querySelectorAll(".tab").forEach(el => {
     el.onclick = () => { state.tab = el.dataset.tab; state.selectedDay = null; render(); };
   });
