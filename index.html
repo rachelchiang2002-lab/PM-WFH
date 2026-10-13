@@ -68,6 +68,25 @@
   .today-date { font-size: 17px; font-weight: 700; margin-bottom: 12px; }
 
   .subtabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .subtabs.level2 { margin-bottom: 12px; }
+  .subtabs.level2 .subtab { min-height: 36px; font-size: 13.5px; border-radius: 8px; padding: 6px 4px; }
+  .subtabs.level2 .subtab.active { color: #fff; }
+  .subtabs.level2 .subtab.wfh.active { background: var(--wfh); border-color: var(--wfh); }
+  .subtabs.level2 .subtab.leave.active { background: var(--leave); border-color: var(--leave); }
+  .subtabs.level2 .subtab.business.active { background: var(--business); border-color: var(--business); }
+  .subtabs.level2 .subtab.month .cnt { font-weight: 800; margin-left: 3px; }
+  .tp-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .tp-row:first-of-type { margin-top: 0; }
+  .tp-row input[type="date"] { width: 100%; box-sizing: border-box; }
+  .tp select { min-width: 0; width: 100%; box-sizing: border-box; }
+  .tp > div { min-width: 0; }
+  @media (max-width: 640px) { .tp-row { grid-template-columns: 1fr; } }
+  .form-msg { font-size: 13.5px; font-weight: 600; margin-top: 10px; }
+  .form-msg.ok { color: var(--wfh); }
+  .form-msg.err { color: #b3412a; }
+  .today-count { font-size: 14px; color: var(--muted); margin: 2px 0 8px; text-align: center; }
+  .today-count b { font-weight: 800; }
+  .chip.me { box-shadow: inset 0 0 0 1.5px currentColor; }
   .subtab {
     flex: 1; border: 1px solid var(--border); background: var(--card); color: var(--muted);
     border-radius: 999px; padding: 8px 6px; font-size: 14px; font-weight: 600; cursor: pointer;
@@ -359,6 +378,9 @@ let state = {
   businessEndTime: "",
   businessPeriod: null,
   settingsSubTab: "register",
+  registerSubTab: "wfh",
+  recordsMonth: "",
+  formMsg: null,
   settingsYear: new Date().getFullYear(),
   settingsQuarter: Math.floor(new Date().getMonth() / 3) + 1,
   quotaWarning: false,
@@ -387,6 +409,11 @@ function statusLabel(status) {
   if (status === "wfh") return "居家";
   if (status === "business") return "公出";
   return "休假";
+}
+
+const STATUS_ORDER = { wfh: 0, leave: 1, business: 2 };
+function sortByStatus(rows) {
+  return rows.map((r, i) => [r, i]).sort((a, b) => ((STATUS_ORDER[a[0].status] ?? 9) - (STATUS_ORDER[b[0].status] ?? 9)) || (a[1] - b[1])).map(x => x[0]);
 }
 
 function statusWithTime(status, time) {
@@ -901,51 +928,69 @@ async function restoreWfh(id, dateStr) {
 }
 
 
-function buildRangeOverrides_(d, startStr, endStr, startTime, endTime, period, status) {
-  const end = endStr || startStr;
-  const hasTime = !!(startTime && endTime);
-  const isSingleDay = end === startStr;
-  let cur = new Date(startStr + "T00:00:00");
-  const last = new Date(end + "T00:00:00");
-  if (cur > last) return;
+function workingDaysBetween_(startStr, endStr) {
+  const out = [];
+  const cur = new Date(startStr + "T00:00:00");
+  const last = new Date((endStr || startStr) + "T00:00:00");
   while (cur <= last) {
-    const dateStr = fmtDate(cur);
+    const ds = fmtDate(cur);
+    const wd = cur.getDay();
+    if (wd >= 1 && wd <= 5 && !HOLIDAYS[ds]) out.push(ds); // 週末、國定假日不用登記
+    cur.setDate(cur.getDate() + 1);
+  }
+  return out;
+}
+
+// 回傳實際寫入的天數（0 = 這段日期全是週末／國定假日）
+function buildRangeOverrides_(d, startStr, endStr, startTime, endTime, period, status) {
+  const days = workingDaysBetween_(startStr, endStr);
+  if (days.length === 0) return 0;
+  const hasTime = !!(startTime && endTime);
+  const first = days[0], last = days[days.length - 1];
+  const single = days.length === 1;
+  for (const dateStr of days) {
     let value;
     if (!hasTime) {
       value = status; // full day, no time info
-    } else if (isSingleDay) {
+    } else if (single) {
       const timeVal = period === "am" ? "AM" : period === "pm" ? "PM" : `${startTime}-${endTime}`;
       value = { status, time: timeVal };
-    } else if (dateStr === startStr) {
+    } else if (dateStr === first) {
       value = { status, time: `${startTime}起` }; // first day: from this time onward
-    } else if (dateStr === end) {
+    } else if (dateStr === last) {
       value = { status, time: `至${endTime}` }; // last day: up until this time
     } else {
       value = status; // days in between are full days
     }
     d.overrides[dateStr] = value;
-    cur.setDate(cur.getDate() + 1);
   }
+  return days.length;
+}
+
+async function addRange_(kind, id, startStr, endStr, startTime, endTime, period) {
+  const name = kind === "leave" ? "休假" : "公出";
+  let err = "";
+  if (!startStr) err = "請先選擇開始日期";
+  else if (endStr && endStr < startStr) err = "結束日期不能早於開始日期";
+  else if (!!startTime !== !!endTime) err = "自訂時間請把開始與結束都選好，或改選整天／上午／下午";
+  if (err) { state.formMsg = { kind, text: err, ok: false }; render(); return; }
+  const n = buildRangeOverrides_(state.memberData[id], startStr, endStr, startTime, endTime, period, kind);
+  if (!n) { state.formMsg = { kind, text: "這段日期都是週末或國定假日，不需登記", ok: false }; render(); return; }
+  if (kind === "leave") { state.leaveStart = ""; state.leaveEnd = ""; state.leaveStartTime = ""; state.leaveEndTime = ""; state.leavePeriod = null; }
+  else { state.businessStart = ""; state.businessEnd = ""; state.businessStartTime = ""; state.businessEndTime = ""; state.businessPeriod = null; }
+  state.formMsg = { kind, text: `已新增${name}（${n} 天），可到「我的紀錄」查看`, ok: true };
+  render();
+  await saveAll();
+  if (state.saveError) state.formMsg = null;
+  render();
 }
 
 async function addLeaveRange(id, startStr, endStr, startTime, endTime, period) {
-  if (!startStr) return;
-  const d = state.memberData[id];
-  buildRangeOverrides_(d, startStr, endStr, startTime, endTime, period, "leave");
-  state.leaveStart = ""; state.leaveEnd = ""; state.leaveStartTime = ""; state.leaveEndTime = ""; state.leavePeriod = null;
-  render();
-  await saveAll();
-  render();
+  return addRange_("leave", id, startStr, endStr, startTime, endTime, period);
 }
 
 async function addBusinessRange(id, startStr, endStr, startTime, endTime, period) {
-  if (!startStr) return;
-  const d = state.memberData[id];
-  buildRangeOverrides_(d, startStr, endStr, startTime, endTime, period, "business");
-  state.businessStart = ""; state.businessEnd = ""; state.businessStartTime = ""; state.businessEndTime = ""; state.businessPeriod = null;
-  render();
-  await saveAll();
-  render();
+  return addRange_("business", id, startStr, endStr, startTime, endTime, period);
 }
 
 async function removeOverride(id, dateStr) {
@@ -1043,6 +1088,9 @@ function renderTodayCard() {
     const status = getDisplayStatus(id, dateStr, wd, dt);
     if (status) rows.push({ id, name: state.memberData[id]?.displayName || id, status });
   }
+  const sortedRows = sortByStatus(rows);
+  const cnt = { wfh: 0, leave: 0, business: 0 };
+  rows.forEach(r => { cnt[r.status] = (cnt[r.status] || 0) + 1; });
   const wdLabel = WD_LABELS[WD_JS_ORDER.indexOf(wd)];
   const todayStr = fmtDate(new Date());
   const isToday = dateStr === todayStr;
@@ -1058,10 +1106,10 @@ function renderTodayCard() {
         ? `<div class="holiday-note">國定假日：${holiday}，不上班</div>`
         : rows.length === 0
           ? '<div class="empty-note">這天大家都在辦公室。</div>'
-          : rows.map(r => `
+          : `<div class="today-count">居家 <b>${cnt.wfh}</b>　休假 <b>${cnt.leave}</b>　公出 <b>${cnt.business}</b></div>` + sortedRows.map(r => `
             <div class="detail-row">
               <span class="status-dot ${r.status}"></span>
-              <span>${r.name}${displayText(r.id, dateStr, r.status, dt)}</span>
+              <span>${r.id === state.currentUserId ? `<b>${r.name}</b>` : r.name}${displayText(r.id, dateStr, r.status, dt)}</span>
               ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
             </div>`).join("")}
       ${state.members.length === 0 ? '<div class="hint" style="margin-top:10px;">目前還沒有人登記，請到「我的設定」設定居家日。</div>' : ''}
@@ -1103,7 +1151,7 @@ function renderMonthView() {
         if (status) dayItems.push({ id, status, name: state.memberData[id]?.displayName || id });
       }
       dayItems.sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9));
-      chips = dayItems.map(it => `<span class="chip ${it.status}">${it.name}</span>`).join("");
+      chips = dayItems.map(it => `<span class="chip ${it.status}${it.id === state.currentUserId ? ' me' : ''}">${it.name}</span>`).join("");
     }
     cells += `
       <div class="day-cell ${dateStr === todayStr ? 'today' : ''}" data-day="${dateStr}">
@@ -1147,6 +1195,7 @@ function renderDayDetail(dateStr) {
     const status = getDisplayStatus(id, dateStr, wd, dt);
     if (status) rows.push({ id, name: state.memberData[id]?.displayName || id, status });
   }
+  const sortedRows = sortByStatus(rows);
   const label = `${dt.getMonth() + 1}月${dt.getDate()}日`;
   return `
     <div class="card">
@@ -1155,10 +1204,10 @@ function renderDayDetail(dateStr) {
         ? `<div class="holiday-note">國定假日：${holiday}，不上班</div>`
         : rows.length === 0
           ? '<div class="empty-note">這天大家都在辦公室。</div>'
-          : rows.map(r => `
+          : sortedRows.map(r => `
             <div class="detail-row">
               <span class="status-dot ${r.status}"></span>
-              <span>${r.name}${displayText(r.id, dateStr, r.status, dt)}</span>
+              <span>${r.id === state.currentUserId ? `<b>${r.name}</b>` : r.name}${displayText(r.id, dateStr, r.status, dt)}</span>
               ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
             </div>`).join("")}
     </div>
@@ -1424,6 +1473,32 @@ async function removeMember(id) {
   render();
 }
 
+function formMsgHtml(kind) {
+  const m = state.formMsg;
+  if (!m || m.kind !== kind) return "";
+  return `<div class="form-msg ${m.ok ? "ok" : "err"}">${m.text}</div>`;
+}
+
+function renderRegisterBar() {
+  const items = [["wfh", "每季居家申請"], ["leave", "休假"], ["business", "公出"]];
+  return `<div class="subtabs level2">${items.map(([k, label]) =>
+    `<button type="button" class="subtab ${k} ${state.registerSubTab === k ? "active" : ""}" data-regtab="${k}">${label}</button>`
+  ).join("")}</div>`;
+}
+
+// 我的紀錄：今天起 90 天內涵蓋到的月份（例如 10月、11月、12月、1月）
+function recordMonths() {
+  const out = [];
+  const start = startOfDay(new Date());
+  const end = new Date(start); end.setDate(end.getDate() + 89);
+  let cur = new Date(start.getFullYear(), start.getMonth(), 1);
+  while (cur <= end) {
+    out.push({ key: `${cur.getFullYear()}-${pad2(cur.getMonth() + 1)}`, label: `${cur.getMonth() + 1}月`, year: cur.getFullYear() });
+    cur = new Date(cur.getFullYear(), cur.getMonth() + 1, 1);
+  }
+  return out;
+}
+
 function renderMemberSettings(id, sub) {
   const d = state.memberData[id];
   const year = state.settingsYear;
@@ -1487,14 +1562,14 @@ function renderMemberSettings(id, sub) {
   const leaveCard = `
     <div class="card">
       <h3 class="section-h">登記休假</h3>
-      <div class="row">
+      <div class="tp-row">
         <div>
           <label class="field-label">開始日期</label>
           <input type="date" id="leave-start" value="${state.leaveStart}" />
         </div>
         <div>
           <label class="field-label">結束日期（單日可留空）</label>
-          <input type="date" id="leave-end" value="${state.leaveEnd}" />
+          <input type="date" id="leave-end" value="${state.leaveEnd}" min="${state.leaveStart}" />
         </div>
       </div>
       <label class="field-label" style="margin-top:12px;">時段（半天假可直接點選，整天假不用選；多天的假只需填第一天/最後一天的時間）</label>
@@ -1503,30 +1578,31 @@ function renderMemberSettings(id, sub) {
         <button class="wd-toggle ${state.leavePeriod === 'am' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="am" data-time-target="leave">上午</button>
         <button class="wd-toggle ${state.leavePeriod === 'pm' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="pm" data-time-target="leave">下午</button>
       </div>
-      <div class="row" style="margin-top:12px;">
-        <div style="flex:1; min-width:140px;">
+      <div class="tp-row">
+        <div>
           <label class="field-label">自訂開始時間</label>
           ${renderTimePicker("leave-start-time", state.leaveStartTime)}
         </div>
-        <div style="flex:1; min-width:140px;">
+        <div>
           <label class="field-label">自訂結束時間</label>
           ${renderTimePicker("leave-end-time", state.leaveEndTime)}
         </div>
       </div>
+      ${formMsgHtml("leave")}
       <button class="btn leave-btn" id="add-leave-btn" style="margin-top:12px;">新增休假</button>
     </div>
   `;
   const businessCard = `
     <div class="card">
       <h3 class="section-h">登記公出</h3>
-      <div class="row">
+      <div class="tp-row">
         <div>
           <label class="field-label">開始日期</label>
           <input type="date" id="business-start" value="${state.businessStart}" />
         </div>
         <div>
           <label class="field-label">結束日期（單日可留空）</label>
-          <input type="date" id="business-end" value="${state.businessEnd}" />
+          <input type="date" id="business-end" value="${state.businessEnd}" min="${state.businessStart}" />
         </div>
       </div>
       <label class="field-label" style="margin-top:12px;">時段（半天可直接點選，整天不用選；多天的公出只需填第一天/最後一天的時間）</label>
@@ -1535,44 +1611,53 @@ function renderMemberSettings(id, sub) {
         <button class="wd-toggle ${state.businessPeriod === 'am' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="am" data-time-target="business">上午</button>
         <button class="wd-toggle ${state.businessPeriod === 'pm' ? 'on' : ''}" style="width:auto; padding:0 14px;" data-time-preset="pm" data-time-target="business">下午</button>
       </div>
-      <div class="row" style="margin-top:12px;">
-        <div style="flex:1; min-width:140px;">
+      <div class="tp-row">
+        <div>
           <label class="field-label">自訂開始時間</label>
           ${renderTimePicker("business-start-time", state.businessStartTime)}
         </div>
-        <div style="flex:1; min-width:140px;">
+        <div>
           <label class="field-label">自訂結束時間</label>
           ${renderTimePicker("business-end-time", state.businessEndTime)}
         </div>
       </div>
+      ${formMsgHtml("business")}
       <button class="btn business-btn" id="add-business-btn" style="margin-top:12px;">新增公出</button>
     </div>
   `;
+  const months = recordMonths();
+  if (!months.some(m => m.key === state.recordsMonth)) state.recordsMonth = months[0].key;
+  const allItems = [
+    ...upcoming.map(u => ({ date: u.date, text: `${displayText(id, u.date, u.status, new Date(u.date + "T00:00:00"))}`, action: "cancel", status: u.status })),
+    ...cancelledWfh.map(c => ({ date: c.date, text: "已取消居家", action: "restore", status: "wfh" }))
+  ].sort((a, b) => a.date.localeCompare(b.date));
+  const countOf = (key) => allItems.filter(it => it.date.startsWith(key)).length;
+  const monthBar = `<div class="subtabs level2">${months.map(m =>
+    `<button type="button" class="subtab month ${state.recordsMonth === m.key ? "active" : ""}" data-recmonth="${m.key}">${m.label}${months.some(x => x.label === m.label && x.year !== m.year) ? "" : ""}<span class="cnt">${countOf(m.key) ? "·" + countOf(m.key) : ""}</span></button>`
+  ).join("")}</div>`;
+  const shown = allItems.filter(it => it.date.startsWith(state.recordsMonth));
+  const wdName = (ds) => "日一二三四五六"[new Date(ds + "T00:00:00").getDay()];
   const recordsCard = `
     <div class="card">
-      <h3 class="section-h">我的登記（未來 90 天）</h3>
-      <div class="hint">臨時有事想取消，點右邊「取消」即可；取消居家後還想恢復，可以再點「恢復居家」</div>
-      ${(() => {
-        const combined = [
-          ...upcoming.map(u => ({ date: u.date, text: `${statusWithTime(u.status, u.time)}`, action: "cancel" })),
-          ...cancelledWfh.map(c => ({ date: c.date, text: "已取消居家", action: "restore" }))
-        ].sort((a, b) => a.date.localeCompare(b.date));
-        if (combined.length === 0) return '<div class="empty-note" style="margin-top:8px;">目前沒有安排。</div>';
-        return `<div class="override-list">
-          ${combined.map(item => `
-            <div class="override-item">
-              <span>${item.date}　${item.text}</span>
-              ${item.action === "cancel"
-                ? `<button class="btn danger" data-cancel-date="${item.date}">取消</button>`
-                : `<button class="btn secondary" data-restore-date="${item.date}">恢復居家</button>`}
-            </div>
-          `).join("")}
-        </div>`;
-      })()}
+      <h3 class="section-h">我的登記</h3>
+      <div class="hint" style="margin-bottom:10px;">切換月份查看今天起 90 天內的安排；臨時有事想取消，點右邊「取消」即可；取消居家後還想恢復，可以再點「恢復居家」</div>
+      ${monthBar}
+      ${shown.length === 0 ? '<div class="empty-note" style="margin-top:8px;">這個月沒有安排。</div>' : `<div class="override-list">
+        ${shown.map(item => `
+          <div class="override-item">
+            <span><span class="status-dot ${item.status}" style="display:inline-block; margin-right:6px;"></span>${item.date.slice(5).replace("-", "/")}（${wdName(item.date)}）　${item.text}</span>
+            ${item.action === "cancel"
+              ? `<button class="btn danger" data-cancel-date="${item.date}">取消</button>`
+              : `<button class="btn secondary" data-restore-date="${item.date}">恢復居家</button>`}
+          </div>
+        `).join("")}
+      </div>`}
     </div>
-
   `;
-  if (sub === "register") return wfhCard + leaveCard + businessCard;
+  if (sub === "register") {
+    const k = state.registerSubTab;
+    return renderRegisterBar() + (k === "leave" ? leaveCard : k === "business" ? businessCard : wfhCard);
+  }
   if (sub === "records") return recordsCard;
   return nameCard; // "account"
 }
@@ -1580,10 +1665,16 @@ function renderMemberSettings(id, sub) {
 function bindEvents() {
   bindPasswordToggles();
   document.querySelectorAll("[data-subtab]").forEach(el => {
-    el.onclick = () => { state.settingsSubTab = el.dataset.subtab; render(); };
+    el.onclick = () => { state.settingsSubTab = el.dataset.subtab; state.formMsg = null; render(); };
+  });
+  document.querySelectorAll("[data-regtab]").forEach(el => {
+    el.onclick = () => { state.registerSubTab = el.dataset.regtab; state.formMsg = null; render(); };
+  });
+  document.querySelectorAll("[data-recmonth]").forEach(el => {
+    el.onclick = () => { state.recordsMonth = el.dataset.recmonth; render(); };
   });
   document.querySelectorAll(".tab").forEach(el => {
-    el.onclick = () => { state.tab = el.dataset.tab; state.selectedDay = null; render(); };
+    el.onclick = () => { state.tab = el.dataset.tab; state.selectedDay = null; state.formMsg = null; render(); };
   });
   document.querySelectorAll("[data-view]").forEach(el => {
     el.onclick = () => {
