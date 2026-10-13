@@ -150,6 +150,26 @@
   .btn.secondary { background: #fff; color: var(--ink); border: 1px solid var(--border); }
   .btn.leave-btn { background: var(--leave); }
   .btn.business-btn { background: var(--business); }
+  .qa-who { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+  .qa-status { font-size: 15px; color: var(--muted); margin-bottom: 16px; }
+  .qa-status b { color: var(--ink); }
+  .qa-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .qa-btn {
+    border: none; border-radius: 14px; color: #fff; font-size: 20px; font-weight: 800; cursor: pointer;
+    aspect-ratio: 1 / 1; font-family: inherit; display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 8px;
+  }
+  .qa-btn:hover { opacity: 0.92; }
+  .qa-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .qa-btn.wfh { background: var(--wfh); }
+  .qa-btn.leave { background: var(--leave); }
+  .qa-btn.business { background: var(--business); }
+  .qa-btn.back { background: #4b5563; grid-column: 1 / -1; aspect-ratio: auto; height: 60px; font-size: 18px; }
+  .qa-toast { background: #e8f3f1; border: 1px solid #bcd9d4; color: #1f5a55; border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; font-size: 14.5px; font-weight: 600; }
+  @media (max-width: 640px) {
+    .qa-grid { grid-template-columns: 1fr; }
+    .qa-btn { aspect-ratio: auto; height: 68px; }
+  }
   .btn.danger { background: #fff; color: #b3412a; border: 1px solid #ecd2c8; padding: 7px 12px; font-size: 12.5px; min-height: 32px; }
   .quota { font-size: 13.5px; color: var(--muted); margin-top: 6px; }
   .quota b { color: var(--ink); }
@@ -230,6 +250,26 @@ const STAFF_DIRECTORY = {
   "2514": { name: "Eric Tsai", email: "EricTsai@transglobe.com.tw" },
 };
 
+// ---- 連線逾時保護：任何網路請求卡住超過時限就中止並丟出錯誤，避免畫面永遠停在「載入中」----
+async function fetchT(url, opts, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms || 10000);
+  try {
+    return await fetch(url, Object.assign({}, opts || {}, { signal: ctrl.signal }));
+  } catch (e) {
+    if (e && e.name === "AbortError") throw new Error("連線逾時（" + Math.round((ms || 10000) / 1000) + " 秒內沒有回應）");
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+// 載入中畫面顯示目前卡在哪一步，方便排查
+function setLoadingStep(msg) {
+  if (state.loaded) return;
+  const a = document.getElementById("app");
+  if (a) a.innerHTML = `<div class="loading">載入中…<div style="font-size:12px; margin-top:6px; color:#9aa0aa;">${msg}</div></div>`;
+}
+
 // ---- Firebase 匿名驗證（讓前端能拿到可以讀寫資料的憑證，而不是任何人拿到網址就能讀寫）----
 let firebaseIdToken = null;
 async function ensureFirebaseAuth(forceRefresh) {
@@ -237,10 +277,10 @@ async function ensureFirebaseAuth(forceRefresh) {
   const configured = FIREBASE_API_KEY && FIREBASE_API_KEY !== "YOUR_FIREBASE_WEB_API_KEY";
   if (!configured) return null; // 還沒設定金鑰時略過，退回原本（未鎖權限）的行為，不擋住使用
   try {
-    const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${FIREBASE_API_KEY}`, {
+    const res = await fetchT(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${FIREBASE_API_KEY}`, {
       method: "POST",
       body: JSON.stringify({ returnSecureToken: true })
-    });
+    }, 8000);
     const data = await res.json();
     if (data && data.idToken) { firebaseIdToken = data.idToken; return firebaseIdToken; }
   } catch (e) {
@@ -295,10 +335,10 @@ async function sendResetEmail(email, name, tempPassword) {
   const configured = MAIL_ENDPOINT_URL && MAIL_ENDPOINT_URL !== "YOUR_APPS_SCRIPT_MAIL_URL_HERE";
   if (!configured) return false;
   try {
-    const res = await fetch(MAIL_ENDPOINT_URL, {
+    const res = await fetchT(MAIL_ENDPOINT_URL, {
       method: "POST",
       body: JSON.stringify({ secret: MAIL_SECRET, email, name, tempPassword })
-    });
+    }, 15000);
     const data = await res.json();
     return !!(data && data.ok);
   } catch (e) {
@@ -316,7 +356,10 @@ let state = {
   currentUserPicture: "",   // avatar url (LIFF mode only)
   members: [],               // array of ids
   memberData: {},             // id -> {displayName, quarterlyWFH:{"2026-Q1":[wd,...]}, overrides:{}}
-  tab: "calendar",
+  tab: "calendar",   // "calendar" | "settings" | "quick"
+  landingDone: false, // 登入後的預設頁籤是否已套用過
+  toast: "",
+  quick: { mode: null, period: "full", startTime: "", endTime: "" },
   calView: "today", // "today" | "month"
   dayCursor: startOfDay(new Date()),
   monthCursor: startOfMonth(new Date()),
@@ -370,7 +413,19 @@ function statusWithTime(status, time) {
 }
 
 async function bootstrap() {
+  try {
+    await bootstrapInner();
+  } catch (e) {
+    console.error("bootstrap failed", e);
+    state.liffError = "初始化發生錯誤：" + e.message;
+    renderLoginChoice();
+  }
+}
+
+async function bootstrapInner() {
+  setLoadingStep("連線驗證中");
   await ensureFirebaseAuth();
+  setLoadingStep("LINE 登入初始化中");
   const liffConfigured = LIFF_ID && LIFF_ID !== "YOUR_LIFF_ID_HERE";
   if (!liffConfigured) {
     state.liffError = "尚未設定 LIFF_ID，目前是測試模式，請用電腦版分機登入。部署到 LINE 後會自動改為自動登入。";
@@ -394,6 +449,7 @@ async function bootstrap() {
     return;
   }
   if (liff.isLoggedIn()) {
+    setLoadingStep("取得 LINE 個人資料中");
     try {
       const profile = await Promise.race([
         liff.getProfile(),
@@ -677,6 +733,7 @@ async function handleForgotSubmit() {
 }
 
 async function loadAll() {
+  setLoadingStep("讀取雲端資料中");
   try {
     const data = await loadRemoteData();
     state.members = data.members || [];
@@ -709,11 +766,11 @@ async function loadAll() {
 
 async function loadRemoteData() {
   await ensureFirebaseAuth();
-  let res = await fetch(withAuth(FIREBASE_URL));
+  let res = await fetchT(withAuth(FIREBASE_URL), {}, 10000);
   if (res.status === 401) {
     // token expired or not yet obtained — refresh once and retry
     await ensureFirebaseAuth(true);
-    res = await fetch(withAuth(FIREBASE_URL));
+    res = await fetchT(withAuth(FIREBASE_URL), {}, 10000);
   }
   if (!res.ok) throw new Error("firebase load failed: " + res.status);
   const data = await res.json();
@@ -731,18 +788,18 @@ async function saveAll() {
   try {
     await ensureFirebaseAuth();
     const body = JSON.stringify({ members: state.members, memberData: state.memberData });
-    let res = await fetch(withAuth(FIREBASE_URL), {
+    let res = await fetchT(withAuth(FIREBASE_URL), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body
-    });
+    }, 15000);
     if (res.status === 401) {
       await ensureFirebaseAuth(true);
-      res = await fetch(withAuth(FIREBASE_URL), {
+      res = await fetchT(withAuth(FIREBASE_URL), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body
-      });
+      }, 15000);
     }
     if (!res.ok) {
       const errBody = await res.text().catch(() => "");
@@ -933,6 +990,13 @@ function render() {
   if (!state.loaded) { app.innerHTML = '<div class="loading">載入中…</div>'; return; }
   if (!state.liffReady && !state.currentUserId) { renderWebLoginGate(); return; }
 
+  // 登入後第一次畫面：快速操作開啟（且非 Catherine）就先進快速操作頁
+  if (!state.landingDone && state.currentUserId) {
+    state.landingDone = true;
+    if (quickAvailable(state.currentUserId) && quickEnabled(state.currentUserId)) state.tab = "quick";
+  }
+  if (state.tab === "quick" && !quickAvailable(state.currentUserId)) state.tab = "calendar";
+
   const canLogout = !state.liffReady && !!state.currentUserId;
   const whoamiHtml = state.currentUserId
     ? `<div class="whoami">${state.currentUserPicture ? `<img src="${state.currentUserPicture}">` : ""}<span>${state.currentUserName}</span>${canLogout ? `<button class="btn danger" id="top-logout-btn" style="padding:4px 10px; font-size:12px; min-height:auto;">登出</button>` : ""}</div>`
@@ -941,7 +1005,7 @@ function render() {
   const html = `
     <header class="top">
       <div>
-        <h1>部門出勤總覽</h1>
+        <h1>PM部門出勤總覽</h1>
       </div>
       ${whoamiHtml}
     </header>
@@ -951,8 +1015,10 @@ function render() {
     <div class="tabs">
       <div class="tab ${state.tab === 'calendar' ? 'active' : ''}" data-tab="calendar">月曆總覽</div>
       <div class="tab ${state.tab === 'settings' ? 'active' : ''}" data-tab="settings">我的設定</div>
+      ${quickAvailable(state.currentUserId) ? `<div class="tab ${state.tab === 'quick' ? 'active' : ''}" data-tab="quick">快速操作</div>` : ""}
     </div>
-    ${state.tab === "calendar" ? renderCalendarTab() : renderSettingsTab()}
+    ${state.toast ? `<div class="qa-toast">${state.toast}</div>` : ""}
+    ${state.tab === "calendar" ? renderCalendarTab() : state.tab === "quick" ? renderQuickTab() : renderSettingsTab()}
   `;
   app.innerHTML = html;
   bindEvents();
@@ -1107,6 +1173,119 @@ function isAdminUser(id) {
   return !!d && ADMIN_DISPLAY_NAMES.includes(d.displayName);
 }
 
+// ===== 快速操作 =====
+function quickAvailable(id) {
+  const d = id && state.memberData[id];
+  return !!d && d.displayName !== "Catherine";
+}
+function quickEnabled(id) {
+  const d = state.memberData[id];
+  return !!d && d.quickActionEnabled !== false;
+}
+function quickGoOverview(toast) {
+  state.tab = "calendar";
+  state.calView = "today";
+  state.dayCursor = startOfDay(new Date());
+  state.selectedDay = null;
+  state.quick = { mode: null, period: "full", startTime: "", endTime: "" };
+  state.toast = toast || "";
+  render();
+}
+
+function renderQuickTab() {
+  const id = state.currentUserId;
+  const d = state.memberData[id] || {};
+  const today = startOfDay(new Date());
+  const dateStr = fmtDate(today);
+  const wd = today.getDay();
+  const dateLabel = `${today.getMonth() + 1}/${today.getDate()}（週${["日","一","二","三","四","五","六"][wd]}）`;
+  const holiday = HOLIDAYS[dateStr];
+  const isOff = wd === 0 || wd === 6 || !!holiday;
+  const status = isOff ? null : getStatus(id, dateStr, wd, today);
+  const time = getOverrideTime(id, dateStr);
+  const label = { wfh: "居家辦公", leave: "休假", business: "公出" };
+  const statusText = isOff
+    ? `今天是${holiday ? "假日（" + holiday + "）" : "週末"}，不需登記`
+    : status ? `今日狀態：<b>${label[status]}${time ? "（" + time + "）" : ""}</b>` : `今日狀態：<b>未登記（正常上班）</b>`;
+  const head = `<div class="qa-who">${d.displayName || ""}　${dateLabel}</div><div class="qa-status">${statusText}</div>`;
+
+  const q = state.quick;
+  if (q.mode && !isOff) {
+    const name = q.mode === "leave" ? "休假" : "公出";
+    const pBtn = (key, text) => `<button class="wd-toggle ${q.period === key ? "on" : ""}" style="width:auto; padding:0 14px;" data-qa-period="${key}">${text}</button>`;
+    return `<div class="card">${head}
+      <h3 class="section-h">今日${name}時間</h3>
+      <div class="q-toggle-row">${pBtn("full", "整天")}${pBtn("am", "上午")}${pBtn("pm", "下午")}${pBtn("custom", "自訂時間")}</div>
+      ${q.period === "custom" ? `
+      <div class="row" style="margin-top:12px;">
+        <div style="flex:1; min-width:140px;"><label class="field-label">開始時間</label><input type="time" id="qa-start-time" value="${q.startTime}" style="width:100%;" /></div>
+        <div style="flex:1; min-width:140px;"><label class="field-label">結束時間</label><input type="time" id="qa-end-time" value="${q.endTime}" style="width:100%;" /></div>
+      </div>` : ""}
+      ${state.quickError ? `<div class="warn-banner" style="margin-top:10px;">${state.quickError}</div>` : ""}
+      <div class="qa-grid" style="margin-top:16px;">
+        <button class="qa-btn ${q.mode}" style="aspect-ratio:auto; height:60px; grid-column:1/-1; font-size:18px;" data-qa="submit">確認送出${name}</button>
+        <button class="qa-btn back" data-qa="cancel-mode">返回</button>
+      </div>
+    </div>`;
+  }
+
+  let buttons = "";
+  if (!isOff) {
+    if (status === "wfh") buttons += `<button class="qa-btn wfh" data-qa="cancel-wfh">取消居家</button>`;
+    buttons += `<button class="qa-btn leave" data-qa="leave">休假</button>`;
+    buttons += `<button class="qa-btn business" data-qa="business">公出</button>`;
+    if (status === "leave" || status === "business") buttons += `<button class="qa-btn wfh" style="background:#b3412a;" data-qa="cancel-reg">取消今日登記</button>`;
+  }
+  buttons += `<button class="qa-btn back" data-qa="back">回總覽畫面</button>`;
+  return `<div class="card">${head}<div class="qa-grid">${buttons}</div></div>`;
+}
+
+async function quickSubmit() {
+  const id = state.currentUserId;
+  const q = state.quick;
+  const dateStr = fmtDate(startOfDay(new Date()));
+  let st = "", et = "", period = null;
+  if (q.period === "am") { st = "09:00"; et = "12:00"; period = "am"; }
+  else if (q.period === "pm") { st = "13:00"; et = "18:00"; period = "pm"; }
+  else if (q.period === "custom") {
+    if (!q.startTime || !q.endTime) { state.quickError = "請填寫開始與結束時間"; render(); return; }
+    st = q.startTime; et = q.endTime;
+  }
+  state.quickError = "";
+  const name = q.mode === "leave" ? "休假" : "公出";
+  if (q.mode === "leave") await addLeaveRange(id, dateStr, "", st, et, period);
+  else await addBusinessRange(id, dateStr, "", st, et, period);
+  quickGoOverview(state.saveError ? "" : `已登記今日${name}`);
+}
+
+async function quickCancelWfh() {
+  await cancelDate(state.currentUserId, fmtDate(startOfDay(new Date())));
+  quickGoOverview(state.saveError ? "" : "已取消今日居家");
+}
+
+async function quickCancelReg() {
+  await restoreWfh(state.currentUserId, fmtDate(startOfDay(new Date())));
+  quickGoOverview(state.saveError ? "" : "已取消今日登記");
+}
+
+function renderQuickToggleCard(id) {
+  if (!quickAvailable(id)) return "";
+  const on = quickEnabled(id);
+  return `
+    <div class="card">
+      <h3 class="section-h">快速操作</h3>
+      <div class="hint">開啟後，登入會先進入「快速操作」畫面，可一鍵取消居家、登記休假或公出；取消則登入後直接看到今天的出勤狀況。目前：<b>${on ? "開啟" : "取消"}</b></div>
+      <button class="btn ${on ? "secondary" : ""}" id="quick-toggle-btn" style="margin-top:10px;">${on ? "取消快速操作功能" : "開啟快速操作功能"}</button>
+    </div>`;
+}
+
+async function toggleQuickEnabled(id) {
+  state.memberData[id].quickActionEnabled = !quickEnabled(id);
+  render();
+  await saveAll();
+  render();
+}
+
 function renderSettingsTab() {
   // By the time this tab can render, render() has already redirected to the
   // login gate for anyone without a currentUserId, so this is always either
@@ -1125,7 +1304,8 @@ function renderSettingsTab() {
   if (sub === "account") {
     body = renderMemberSettings(id, "account")
       + renderWebAccessCard(id)
-      + (!state.liffReady ? renderChangePasswordCard() : "");
+      + (!state.liffReady ? renderChangePasswordCard() : "")
+      + renderQuickToggleCard(id);
   } else if (sub === "manage") {
     body = renderMemberManagement();
   } else {
@@ -1478,7 +1658,7 @@ function bindEvents() {
     el.onclick = () => { state.settingsSubTab = el.dataset.subtab; render(); };
   });
   document.querySelectorAll(".tab").forEach(el => {
-    el.onclick = () => { state.tab = el.dataset.tab; state.selectedDay = null; render(); };
+    el.onclick = () => { state.tab = el.dataset.tab; state.selectedDay = null; state.toast = ""; state.quick.mode = null; render(); };
   });
   document.querySelectorAll("[data-view]").forEach(el => {
     el.onclick = () => {
@@ -1512,6 +1692,27 @@ function bindEvents() {
     };
   });
 
+  document.querySelectorAll("[data-qa]").forEach(el => {
+    el.onclick = async () => {
+      const a = el.dataset.qa;
+      if (a === "back") quickGoOverview("");
+      else if (a === "leave" || a === "business") { state.quick = { mode: a, period: "full", startTime: "", endTime: "" }; state.quickError = ""; render(); }
+      else if (a === "cancel-mode") { state.quick.mode = null; state.quickError = ""; render(); }
+      else if (a === "submit") await quickSubmit();
+      else if (a === "cancel-wfh") await quickCancelWfh();
+      else if (a === "cancel-reg") await quickCancelReg();
+    };
+  });
+  document.querySelectorAll("[data-qa-period]").forEach(el => {
+    el.onclick = () => { state.quick.period = el.dataset.qaPeriod; render(); };
+  });
+  const qaStart = document.getElementById("qa-start-time");
+  const qaEnd = document.getElementById("qa-end-time");
+  if (qaStart) qaStart.oninput = (e) => { state.quick.startTime = e.target.value; };
+  if (qaEnd) qaEnd.oninput = (e) => { state.quick.endTime = e.target.value; };
+  const quickToggleBtn = document.getElementById("quick-toggle-btn");
+  if (quickToggleBtn) quickToggleBtn.onclick = () => toggleQuickEnabled(state.currentUserId);
+
   const changePwBtn = document.getElementById("change-pw-btn");
   if (changePwBtn) changePwBtn.onclick = () => handleChangePassword();
 
@@ -1526,6 +1727,8 @@ function bindEvents() {
     try { localStorage.removeItem("attendance_web_session_id"); } catch (e) {}
     state.currentUserId = "";
     state.currentUserName = "";
+    state.landingDone = false; state.tab = "calendar"; state.toast = "";
+    state.quick = { mode: null, period: "full", startTime: "", endTime: "" };
     state.webLogin = { step: "ext", ext: "", matchedId: null, matchedName: "", error: "" };
     render();
   };
