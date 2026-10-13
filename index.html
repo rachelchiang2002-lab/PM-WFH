@@ -3,9 +3,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <!-- ===== 設定區:把下面這行換成你在 LINE Developers Console 拿到的 LIFF ID ===== -->
 <script>
+  const LIFF_ID = "YOUR_LIFF_ID_HERE"; // 例如 "1234567890-AbCdEfGh"
   const LIFF_ID = "2011478484-krfYEfBj"; // 例如 "1234567890-AbCdEfGh"
   const FIREBASE_URL = "https://pm-wfh-default-rtdb.asia-southeast1.firebasedatabase.app/data.json"; // Firebase Realtime Database 的資料網址
-  const FIREBASE_API_KEY = "AIzaSyASR6R37tvv3rwOZVBh6odx5NNB59LfUPc";
   const MAIL_ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbyDHzOom7XZ2K3oSzu3sZ4PW3oTzpXSYNsFJ1H3c147wlwz3VMgab1-p93671H3aH7lcg/exec";
   const MAIL_SECRET = "x7Qp2vR9mK4wL8sT";
 </script>
@@ -100,11 +100,11 @@
   .day-cell.dim { background: #fafbfc; color: #c3c7cf; }
   .day-cell:hover { border-color: #c9ced7; }
   .day-cell.today { border-color: var(--accent); border-width: 1.5px; }
-  .day-num { font-size: 11px; font-weight: 700; }
+  .day-num { font-size: 13px; font-weight: 700; }
   .day-cell.dim .day-num { color: #b9bec8; }
   .chips { display: flex; flex-direction: column; gap: 2px; }
   .chip {
-    font-size: 9.5px; font-weight: 700; padding: 2px 4px; border-radius: 4px; line-height: 1.35;
+    font-size: 12.5px; font-weight: 700; padding: 3px 6px; border-radius: 4px; line-height: 1.35;
     white-space: normal; word-break: break-word;
   }
   .chip.wfh { background: var(--wfh-bg); color: var(--wfh); }
@@ -1030,13 +1030,15 @@ function renderMonthView() {
     if (holiday) {
       chips = `<span class="chip holiday">${holiday}</span>`;
     } else {
+      // 同一天依「居家 → 休假 → 公出」分組排列（同組內維持原本的成員順序），顏色不會穿插
+      const statusOrder = { wfh: 0, leave: 1, business: 2 };
+      const dayItems = [];
       for (const id of state.members) {
         const status = getStatus(id, dateStr, wd, dt);
-        if (status) {
-          const displayName = state.memberData[id]?.displayName || id;
-          chips += `<span class="chip ${status}">${displayName}</span>`;
-        }
+        if (status) dayItems.push({ id, status, name: state.memberData[id]?.displayName || id });
       }
+      dayItems.sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9));
+      chips = dayItems.map(it => `<span class="chip ${it.status}">${it.name}</span>`).join("");
     }
     cells += `
       <div class="day-cell ${dateStr === todayStr ? 'today' : ''}" data-day="${dateStr}">
