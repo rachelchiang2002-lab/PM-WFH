@@ -150,32 +150,6 @@
   .btn.secondary { background: #fff; color: var(--ink); border: 1px solid var(--border); }
   .btn.leave-btn { background: var(--leave); }
   .btn.business-btn { background: var(--business); }
-  .qa-who { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
-  .qa-status { font-size: 15px; color: var(--muted); margin-bottom: 16px; }
-  .qa-status b { color: var(--ink); }
-  .qa-grid { display: flex; gap: 12px; flex-wrap: wrap; }
-  .qa-btn {
-    flex: 1; min-width: 110px; height: 64px; border-radius: 12px; font-size: 18px; font-weight: 800; cursor: pointer;
-    font-family: inherit; display: flex; align-items: center; justify-content: center; text-align: center; padding: 8px;
-    border: 1px solid transparent;
-  }
-  .qa-btn:hover { opacity: 0.88; }
-  .qa-btn.wfh { background: var(--wfh-bg); color: var(--wfh); border-color: #bcd9d4; }
-  .qa-btn.leave { background: var(--leave-bg); color: var(--leave); border-color: #ecd3b6; }
-  .qa-btn.business { background: var(--business-bg); color: var(--business); border-color: #cfd3ee; }
-  .qa-btn.cancelreg { background: #fbe4e4; color: #b3412a; border-color: #efc3bb; }
-  .qa-btn.back { background: #e5e7eb; color: #374151; border-color: #d1d5db; }
-  .qa-btn.full { flex-basis: 100%; }
-  .qa-toast { background: #e8f3f1; border: 1px solid #bcd9d4; color: #1f5a55; border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; font-size: 14.5px; font-weight: 600; }
-  @media (max-width: 640px) {
-    .qa-grid { flex-direction: column; }
-    .qa-btn { flex: none; height: 68px; width: 100%; }
-    .qa-btn.wfh { background: var(--wfh); color: #fff; border-color: transparent; }
-    .qa-btn.leave { background: var(--leave); color: #fff; border-color: transparent; }
-    .qa-btn.business { background: var(--business); color: #fff; border-color: transparent; }
-    .qa-btn.cancelreg { background: #b3412a; color: #fff; border-color: transparent; }
-    .qa-btn.back { background: #4b5563; color: #fff; border-color: transparent; }
-  }
   @media (max-width: 640px) {
     .legend { font-size: 12.5px; gap: 12px; }
     .dot { width: 10px; height: 10px; }
@@ -369,10 +343,7 @@ let state = {
   currentUserPicture: "",   // avatar url (LIFF mode only)
   members: [],               // array of ids
   memberData: {},             // id -> {displayName, quarterlyWFH:{"2026-Q1":[wd,...]}, overrides:{}}
-  tab: "calendar",   // "calendar" | "settings" | "quick"
-  landingDone: false, // 登入後的預設頁籤是否已套用過
-  toast: "",
-  quick: { mode: null, period: "full", startTime: "", endTime: "" },
+  tab: "calendar",
   calView: "today", // "today" | "month"
   dayCursor: startOfDay(new Date()),
   monthCursor: startOfMonth(new Date()),
@@ -848,6 +819,28 @@ function getOverrideTime(id, dateStr) {
   return null;
 }
 
+// 居家日（每週固定居家）中途請假／公出（半天或幾小時）時，這天仍算居家，另外把請假時段記在今天的狀態裡。
+function getPartialOnWfh(id, dateStr, dateObj) {
+  if (HOLIDAYS[dateStr]) return null;
+  const d = state.memberData[id];
+  const v = d && d.overrides && d.overrides[dateStr];
+  if (!v || typeof v !== "object" || !v.time || (v.status !== "leave" && v.status !== "business")) return null;
+  const qKey = quarterKey(dateObj);
+  if (d.quarterlyWFH && d.quarterlyWFH[qKey] && d.quarterlyWFH[qKey].includes(dateObj.getDay())) return v;
+  return null;
+}
+
+// 顯示用狀態：居家日中途請假仍顯示為居家（整月顏色不變）；其餘維持原本判斷。
+function getDisplayStatus(id, dateStr, weekday, dateObj) {
+  return getPartialOnWfh(id, dateStr, dateObj) ? "wfh" : getStatus(id, dateStr, weekday, dateObj);
+}
+
+function displayText(id, dateStr, status, dateObj) {
+  const p = getPartialOnWfh(id, dateStr, dateObj);
+  if (p) return "居家，" + statusWithTime(p.status, p.time);
+  return statusWithTime(status, getOverrideTime(id, dateStr));
+}
+
 async function updateDisplayName(id, name) {
   name = name.trim();
   if (!name) return;
@@ -892,7 +885,9 @@ async function clearQuarter(id, key) {
 }
 
 async function cancelDate(id, dateStr) {
-  state.memberData[id].overrides[dateStr] = "office";
+  // 居家日中途請假：只取消請假時段，居家保留
+  if (getPartialOnWfh(id, dateStr, new Date(dateStr + "T00:00:00"))) delete state.memberData[id].overrides[dateStr];
+  else state.memberData[id].overrides[dateStr] = "office";
   render();
   await saveAll();
   render();
@@ -1003,13 +998,6 @@ function render() {
   if (!state.loaded) { app.innerHTML = '<div class="loading">載入中…</div>'; return; }
   if (!state.liffReady && !state.currentUserId) { renderWebLoginGate(); return; }
 
-  // 登入後第一次畫面：快速操作開啟（且非 Catherine）就先進快速操作頁
-  if (!state.landingDone && state.currentUserId) {
-    state.landingDone = true;
-    if (quickAvailable(state.currentUserId) && quickEnabled(state.currentUserId)) state.tab = "quick";
-  }
-  if (state.tab === "quick" && !quickAvailable(state.currentUserId)) state.tab = "calendar";
-
   const canLogout = !state.liffReady && !!state.currentUserId;
   const whoamiHtml = state.currentUserId
     ? `<div class="whoami">${state.currentUserPicture ? `<img src="${state.currentUserPicture}">` : ""}<span>${state.currentUserName}</span>${canLogout ? `<button class="btn danger" id="top-logout-btn" style="padding:4px 10px; font-size:12px; min-height:auto;">登出</button>` : ""}</div>`
@@ -1028,10 +1016,8 @@ function render() {
     <div class="tabs">
       <div class="tab ${state.tab === 'calendar' ? 'active' : ''}" data-tab="calendar">月曆總覽</div>
       <div class="tab ${state.tab === 'settings' ? 'active' : ''}" data-tab="settings">我的設定</div>
-      ${quickAvailable(state.currentUserId) ? `<div class="tab ${state.tab === 'quick' ? 'active' : ''}" data-tab="quick">快速操作</div>` : ""}
     </div>
-    ${state.toast ? `<div class="qa-toast">${state.toast}</div>` : ""}
-    ${state.tab === "calendar" ? renderCalendarTab() : state.tab === "quick" ? renderQuickTab() : renderSettingsTab()}
+    ${state.tab === "calendar" ? renderCalendarTab() : renderSettingsTab()}
   `;
   app.innerHTML = html;
   bindEvents();
@@ -1054,7 +1040,7 @@ function renderTodayCard() {
   const holiday = holidayName(dateStr);
   const rows = [];
   for (const id of state.members) {
-    const status = getStatus(id, dateStr, wd, dt);
+    const status = getDisplayStatus(id, dateStr, wd, dt);
     if (status) rows.push({ id, name: state.memberData[id]?.displayName || id, status });
   }
   const wdLabel = WD_LABELS[WD_JS_ORDER.indexOf(wd)];
@@ -1075,7 +1061,7 @@ function renderTodayCard() {
           : rows.map(r => `
             <div class="detail-row">
               <span class="status-dot ${r.status}"></span>
-              <span>${r.name}${statusWithTime(r.status, getOverrideTime(r.id, dateStr))}</span>
+              <span>${r.name}${displayText(r.id, dateStr, r.status, dt)}</span>
               ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
             </div>`).join("")}
       ${state.members.length === 0 ? '<div class="hint" style="margin-top:10px;">目前還沒有人登記，請到「我的設定」設定居家日。</div>' : ''}
@@ -1113,7 +1099,7 @@ function renderMonthView() {
       const statusOrder = { wfh: 0, leave: 1, business: 2 };
       const dayItems = [];
       for (const id of state.members) {
-        const status = getStatus(id, dateStr, wd, dt);
+        const status = getDisplayStatus(id, dateStr, wd, dt);
         if (status) dayItems.push({ id, status, name: state.memberData[id]?.displayName || id });
       }
       dayItems.sort((a, b) => (statusOrder[a.status] ?? 9) - (statusOrder[b.status] ?? 9));
@@ -1158,7 +1144,7 @@ function renderDayDetail(dateStr) {
   const holiday = holidayName(dateStr);
   const rows = [];
   for (const id of state.members) {
-    const status = getStatus(id, dateStr, wd, dt);
+    const status = getDisplayStatus(id, dateStr, wd, dt);
     if (status) rows.push({ id, name: state.memberData[id]?.displayName || id, status });
   }
   const label = `${dt.getMonth() + 1}月${dt.getDate()}日`;
@@ -1172,7 +1158,7 @@ function renderDayDetail(dateStr) {
           : rows.map(r => `
             <div class="detail-row">
               <span class="status-dot ${r.status}"></span>
-              <span>${r.name}${statusWithTime(r.status, getOverrideTime(r.id, dateStr))}</span>
+              <span>${r.name}${displayText(r.id, dateStr, r.status, dt)}</span>
               ${r.id === state.currentUserId ? `<button class="btn danger cancel-btn" data-cancel-date="${dateStr}">取消</button>` : ''}
             </div>`).join("")}
     </div>
@@ -1184,119 +1170,6 @@ const ADMIN_DISPLAY_NAMES = ["Rachel", "Catherine"];
 function isAdminUser(id) {
   const d = state.memberData[id];
   return !!d && ADMIN_DISPLAY_NAMES.includes(d.displayName);
-}
-
-// ===== 快速操作 =====
-function quickAvailable(id) {
-  const d = id && state.memberData[id];
-  return !!d && d.displayName !== "Catherine";
-}
-function quickEnabled(id) {
-  const d = state.memberData[id];
-  return !!d && d.quickActionEnabled !== false;
-}
-function quickGoOverview(toast) {
-  state.tab = "calendar";
-  state.calView = "today";
-  state.dayCursor = startOfDay(new Date());
-  state.selectedDay = null;
-  state.quick = { mode: null, period: "full", startTime: "", endTime: "" };
-  state.toast = toast || "";
-  render();
-}
-
-function renderQuickTab() {
-  const id = state.currentUserId;
-  const d = state.memberData[id] || {};
-  const today = startOfDay(new Date());
-  const dateStr = fmtDate(today);
-  const wd = today.getDay();
-  const dateLabel = `${today.getMonth() + 1}/${today.getDate()}（週${["日","一","二","三","四","五","六"][wd]}）`;
-  const holiday = HOLIDAYS[dateStr];
-  const isOff = wd === 0 || wd === 6 || !!holiday;
-  const status = isOff ? null : getStatus(id, dateStr, wd, today);
-  const time = getOverrideTime(id, dateStr);
-  const label = { wfh: "居家辦公", leave: "休假", business: "公出" };
-  const statusText = isOff
-    ? `今天是${holiday ? "假日（" + holiday + "）" : "週末"}，不需登記`
-    : status ? `今日狀態：<b>${label[status]}${time ? "（" + time + "）" : ""}</b>` : `今日狀態：<b>辦公室上班</b>`;
-  const head = `<div class="qa-who">${d.displayName || ""}　${dateLabel}</div><div class="qa-status">${statusText}</div>`;
-
-  const q = state.quick;
-  if (q.mode && !isOff) {
-    const name = q.mode === "leave" ? "休假" : "公出";
-    const pBtn = (key, text) => `<button class="wd-toggle ${q.period === key ? "on" : ""}" style="width:auto; padding:0 14px;" data-qa-period="${key}">${text}</button>`;
-    return `<div class="card">${head}
-      <h3 class="section-h">今日${name}時間</h3>
-      <div class="q-toggle-row">${pBtn("full", "整天")}${pBtn("am", "上午")}${pBtn("pm", "下午")}${pBtn("custom", "自訂時間")}</div>
-      ${q.period === "custom" ? `
-      <div class="row" style="margin-top:12px;">
-        <div style="flex:1; min-width:140px;"><label class="field-label">開始時間</label><input type="time" id="qa-start-time" value="${q.startTime}" style="width:100%;" /></div>
-        <div style="flex:1; min-width:140px;"><label class="field-label">結束時間</label><input type="time" id="qa-end-time" value="${q.endTime}" style="width:100%;" /></div>
-      </div>` : ""}
-      ${state.quickError ? `<div class="warn-banner" style="margin-top:10px;">${state.quickError}</div>` : ""}
-      <div class="qa-grid" style="margin-top:16px;">
-        <button class="qa-btn full ${q.mode}" data-qa="submit">確認送出${name}</button>
-        <button class="qa-btn back full" data-qa="cancel-mode">返回</button>
-      </div>
-    </div>`;
-  }
-
-  let buttons = "";
-  if (!isOff) {
-    if (status === "wfh") buttons += `<button class="qa-btn wfh" data-qa="cancel-wfh">取消居家</button>`;
-    buttons += `<button class="qa-btn leave" data-qa="leave">休假</button>`;
-    buttons += `<button class="qa-btn business" data-qa="business">公出</button>`;
-    if (status === "leave" || status === "business") buttons += `<button class="qa-btn cancelreg" data-qa="cancel-reg">取消今日登記</button>`;
-  }
-  buttons += `<button class="qa-btn back" data-qa="back">回總覽畫面</button>`;
-  return `<div class="card">${head}<div class="qa-grid">${buttons}</div></div>`;
-}
-
-async function quickSubmit() {
-  const id = state.currentUserId;
-  const q = state.quick;
-  const dateStr = fmtDate(startOfDay(new Date()));
-  let st = "", et = "", period = null;
-  if (q.period === "am") { st = "09:00"; et = "12:00"; period = "am"; }
-  else if (q.period === "pm") { st = "13:00"; et = "18:00"; period = "pm"; }
-  else if (q.period === "custom") {
-    if (!q.startTime || !q.endTime) { state.quickError = "請填寫開始與結束時間"; render(); return; }
-    st = q.startTime; et = q.endTime;
-  }
-  state.quickError = "";
-  const name = q.mode === "leave" ? "休假" : "公出";
-  if (q.mode === "leave") await addLeaveRange(id, dateStr, "", st, et, period);
-  else await addBusinessRange(id, dateStr, "", st, et, period);
-  quickGoOverview(state.saveError ? "" : `已登記今日${name}`);
-}
-
-async function quickCancelWfh() {
-  await cancelDate(state.currentUserId, fmtDate(startOfDay(new Date())));
-  quickGoOverview(state.saveError ? "" : "已取消今日居家");
-}
-
-async function quickCancelReg() {
-  await restoreWfh(state.currentUserId, fmtDate(startOfDay(new Date())));
-  quickGoOverview(state.saveError ? "" : "已取消今日登記");
-}
-
-function renderQuickToggleCard(id) {
-  if (!quickAvailable(id)) return "";
-  const on = quickEnabled(id);
-  return `
-    <div class="card">
-      <h3 class="section-h">快速操作</h3>
-      <div class="hint">開啟後，登入會先進入「快速操作」畫面，可一鍵取消居家、登記休假或公出；取消則登入後直接看到今天的出勤狀況。目前：<b>${on ? "開啟" : "取消"}</b></div>
-      <button class="btn ${on ? "secondary" : ""}" id="quick-toggle-btn" style="margin-top:10px;">${on ? "取消快速操作功能" : "開啟快速操作功能"}</button>
-    </div>`;
-}
-
-async function toggleQuickEnabled(id) {
-  state.memberData[id].quickActionEnabled = !quickEnabled(id);
-  render();
-  await saveAll();
-  render();
 }
 
 function renderSettingsTab() {
@@ -1317,8 +1190,7 @@ function renderSettingsTab() {
   if (sub === "account") {
     body = renderMemberSettings(id, "account")
       + renderWebAccessCard(id)
-      + (!state.liffReady ? renderChangePasswordCard() : "")
-      + renderQuickToggleCard(id);
+      + (!state.liffReady ? renderChangePasswordCard() : "");
   } else if (sub === "manage") {
     body = renderMemberManagement();
   } else {
@@ -1671,7 +1543,7 @@ function bindEvents() {
     el.onclick = () => { state.settingsSubTab = el.dataset.subtab; render(); };
   });
   document.querySelectorAll(".tab").forEach(el => {
-    el.onclick = () => { state.tab = el.dataset.tab; state.selectedDay = null; state.toast = ""; state.quick.mode = null; render(); };
+    el.onclick = () => { state.tab = el.dataset.tab; state.selectedDay = null; render(); };
   });
   document.querySelectorAll("[data-view]").forEach(el => {
     el.onclick = () => {
@@ -1705,27 +1577,6 @@ function bindEvents() {
     };
   });
 
-  document.querySelectorAll("[data-qa]").forEach(el => {
-    el.onclick = async () => {
-      const a = el.dataset.qa;
-      if (a === "back") quickGoOverview("");
-      else if (a === "leave" || a === "business") { state.quick = { mode: a, period: "full", startTime: "", endTime: "" }; state.quickError = ""; render(); }
-      else if (a === "cancel-mode") { state.quick.mode = null; state.quickError = ""; render(); }
-      else if (a === "submit") await quickSubmit();
-      else if (a === "cancel-wfh") await quickCancelWfh();
-      else if (a === "cancel-reg") await quickCancelReg();
-    };
-  });
-  document.querySelectorAll("[data-qa-period]").forEach(el => {
-    el.onclick = () => { state.quick.period = el.dataset.qaPeriod; render(); };
-  });
-  const qaStart = document.getElementById("qa-start-time");
-  const qaEnd = document.getElementById("qa-end-time");
-  if (qaStart) qaStart.oninput = (e) => { state.quick.startTime = e.target.value; };
-  if (qaEnd) qaEnd.oninput = (e) => { state.quick.endTime = e.target.value; };
-  const quickToggleBtn = document.getElementById("quick-toggle-btn");
-  if (quickToggleBtn) quickToggleBtn.onclick = () => toggleQuickEnabled(state.currentUserId);
-
   const changePwBtn = document.getElementById("change-pw-btn");
   if (changePwBtn) changePwBtn.onclick = () => handleChangePassword();
 
@@ -1740,8 +1591,7 @@ function bindEvents() {
     try { localStorage.removeItem("attendance_web_session_id"); } catch (e) {}
     state.currentUserId = "";
     state.currentUserName = "";
-    state.landingDone = false; state.tab = "calendar"; state.toast = "";
-    state.quick = { mode: null, period: "full", startTime: "", endTime: "" };
+    state.tab = "calendar";
     state.webLogin = { step: "ext", ext: "", matchedId: null, matchedName: "", error: "" };
     render();
   };
