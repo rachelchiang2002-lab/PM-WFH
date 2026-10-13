@@ -1172,6 +1172,46 @@ function isAdminUser(id) {
   return !!d && ADMIN_DISPLAY_NAMES.includes(d.displayName);
 }
 
+// ===== 自訂時間選擇：上午／下午 → 小時 → 分鐘（每 5 分鐘）=====
+const TP_FIELDS = {
+  "leave-start-time": "leaveStartTime", "leave-end-time": "leaveEndTime",
+  "business-start-time": "businessStartTime", "business-end-time": "businessEndTime"
+};
+const TP_LINKED_PERIOD = { leaveStartTime: "leavePeriod", leaveEndTime: "leavePeriod", businessStartTime: "businessPeriod", businessEndTime: "businessPeriod" };
+state.tp = state.tp || {};
+function tpParse(id, value) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(value || "");
+  if (m) { const h = parseInt(m[1], 10); return { p: h >= 13 ? "pm" : "am", h, m: parseInt(m[2], 10) }; }
+  return { p: (state.tp[id] && state.tp[id].p) || "am", h: null, m: 0 };
+}
+function renderTimePicker(id, value) {
+  // 選了上方的「上午／下午」快速按鈕時，只標示上午／下午，不在自訂時間裡顯示時間（每個人的上班時間不同）
+  const presetOn = state[TP_LINKED_PERIOD[TP_FIELDS[id]]];
+  const t = tpParse(id, presetOn ? "" : value);
+  const hours = t.p === "am" ? [8, 9, 10, 11, 12] : [13, 14, 15, 16, 17, 18];
+  const hLabel = (h) => (h > 12 ? h - 12 : h) + " 點";
+  const mins = []; for (let i = 0; i < 60; i += 5) mins.push(i);
+  const pb = (key, text) => `<button type="button" class="wd-toggle ${t.p === key ? "on" : ""}" style="width:auto; padding:0 14px; height:38px;" data-tp-period="${id}|${key}">${text}</button>`;
+  return `
+    <div class="tp" data-tp="${id}">
+      <div class="q-toggle-row" style="margin-top:0; margin-bottom:6px;">${pb("am", "上午")}${pb("pm", "下午")}</div>
+      <div style="display:flex; gap:8px;">
+        <select data-tp-h="${id}" style="flex:1;">
+          <option value="">時</option>
+          ${hours.map(h => `<option value="${h}" ${t.h === h ? "selected" : ""}>${hLabel(h)}</option>`).join("")}
+        </select>
+        <select data-tp-m="${id}" style="flex:1;">
+          ${mins.map(mm => `<option value="${mm}" ${t.m === mm ? "selected" : ""}>${pad2(mm)} 分</option>`).join("")}
+        </select>
+      </div>
+    </div>`;
+}
+function tpApply(id, h, mm) {
+  const field = TP_FIELDS[id];
+  state[field] = (h === null || h === "") ? "" : `${pad2(parseInt(h, 10))}:${pad2(parseInt(mm || 0, 10))}`;
+  state[TP_LINKED_PERIOD[field]] = null;
+}
+
 function renderSettingsTab() {
   // By the time this tab can render, render() has already redirected to the
   // login gate for anyone without a currentUserId, so this is always either
@@ -1466,11 +1506,11 @@ function renderMemberSettings(id, sub) {
       <div class="row" style="margin-top:12px;">
         <div style="flex:1; min-width:140px;">
           <label class="field-label">自訂開始時間</label>
-          <input type="time" id="leave-start-time" value="${state.leaveStartTime}" style="width:100%;" />
+          ${renderTimePicker("leave-start-time", state.leaveStartTime)}
         </div>
         <div style="flex:1; min-width:140px;">
           <label class="field-label">自訂結束時間</label>
-          <input type="time" id="leave-end-time" value="${state.leaveEndTime}" style="width:100%;" />
+          ${renderTimePicker("leave-end-time", state.leaveEndTime)}
         </div>
       </div>
       <button class="btn leave-btn" id="add-leave-btn" style="margin-top:12px;">新增休假</button>
@@ -1498,11 +1538,11 @@ function renderMemberSettings(id, sub) {
       <div class="row" style="margin-top:12px;">
         <div style="flex:1; min-width:140px;">
           <label class="field-label">自訂開始時間</label>
-          <input type="time" id="business-start-time" value="${state.businessStartTime}" style="width:100%;" />
+          ${renderTimePicker("business-start-time", state.businessStartTime)}
         </div>
         <div style="flex:1; min-width:140px;">
           <label class="field-label">自訂結束時間</label>
-          <input type="time" id="business-end-time" value="${state.businessEndTime}" style="width:100%;" />
+          ${renderTimePicker("business-end-time", state.businessEndTime)}
         </div>
       </div>
       <button class="btn business-btn" id="add-business-btn" style="margin-top:12px;">新增公出</button>
@@ -1574,6 +1614,30 @@ function bindEvents() {
     el.onclick = () => {
       state.selectedDay = state.selectedDay === el.dataset.day ? null : el.dataset.day;
       render();
+    };
+  });
+
+  document.querySelectorAll("[data-tp-period]").forEach(el => {
+    el.onclick = () => {
+      const [id, p] = el.dataset.tpPeriod.split("|");
+      state.tp[id] = { p };
+      tpApply(id, null, 0); // 換上午／下午後重選小時
+      render();
+    };
+  });
+  document.querySelectorAll("[data-tp-h]").forEach(el => {
+    el.onchange = () => {
+      const id = el.dataset.tpH;
+      const mSel = document.querySelector(`[data-tp-m="${id}"]`);
+      tpApply(id, el.value, mSel ? mSel.value : 0);
+      render();
+    };
+  });
+  document.querySelectorAll("[data-tp-m]").forEach(el => {
+    el.onchange = () => {
+      const id = el.dataset.tpM;
+      const hSel = document.querySelector(`[data-tp-h="${id}"]`);
+      if (hSel && hSel.value !== "") { tpApply(id, hSel.value, el.value); render(); }
     };
   });
 
