@@ -1,15 +1,31 @@
 <!doctype html>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-<!-- ===== 設定區:把下面這行換成你在 LINE Developers Console 拿到的 LIFF ID ===== -->
+<title>PM出勤</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="PM出勤" />
+<meta name="application-name" content="PM出勤" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="theme-color" content="#2f6f6b" />
+<!-- 設定已拆成獨立檔案 config.js（金鑰/網址）。若修改 config.js，請把後面的 ?v= 數字加 1，手機才會抓到新版 -->
+<script src="config.js?v=1"></script>
 <script>
-  const LIFF_ID = "2011478484-krfYEfBj"; // 例如 "1234567890-AbCdEfGh"
-  const FIREBASE_URL = "https://pm-wfh-default-rtdb.asia-southeast1.firebasedatabase.app/data.json"; // Firebase Realtime Database 的資料網址
-  const FIREBASE_API_KEY = "AIzaSyASR6R37tvv3rwOZVBh6odx5NNB59LfUPc";
-  const MAIL_ENDPOINT_URL = "https://script.google.com/macros/s/AKfycbyDHzOom7XZ2K3oSzu3sZ4PW3oTzpXSYNsFJ1H3c147wlwz3VMgab1-p93671H3aH7lcg/exec";
-  const MAIL_SECRET = "x7Qp2vR9mK4wL8sT";
+  const _C = window.APP_CONFIG || {};
+  const LIFF_ID = _C.LIFF_ID || "YOUR_LIFF_ID_HERE";
+  const FIREBASE_URL = _C.FIREBASE_URL || "";
+  const FIREBASE_API_KEY = _C.FIREBASE_API_KEY || "";
+  const MAIL_ENDPOINT_URL = _C.MAIL_ENDPOINT_URL || "";
+  const MAIL_SECRET = _C.MAIL_SECRET || "";
+  if (!window.APP_CONFIG) {
+    document.addEventListener("DOMContentLoaded", function () {
+      document.body.insertAdjacentHTML("afterbegin", '<div style="background:#fee2e2;color:#991b1b;padding:10px;font-size:14px">找不到 config.js，請確認檔案已和 index.html 放在同一個資料夾。</div>');
+    });
+  }
 </script>
-<!-- ========================================================================= -->
 <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
 <style>
   :root {
@@ -207,6 +223,7 @@ const WD_LABELS = ["一","二","三","四","五","六","日"]; // Mon..Sun colum
 const WD_JS_ORDER = [1,2,3,4,5,6,0]; // corresponding JS getDay() values
 
 // 國定假日：這幾天一律視為不上班，個人居家/休假/公出登記都不會顯示
+// 格式："YYYY-MM-DD": ["假日名稱"]，每年更新一次即可
 const HOLIDAYS = {
   "2026-09-25": ["中秋節"],
   "2026-09-28": ["教師節"],
@@ -492,7 +509,7 @@ function renderLoginChoice() {
       <h2 style="margin-bottom:6px; font-size:19px;">PM部門出勤總覽</h2>
       ${state.liffError ? `<div class="warn-banner" style="text-align:left;">${state.liffError}</div>` : ""}
       <p style="color:var(--muted); font-size:13.5px; margin-bottom:24px;">選擇登入方式</p>
-      <button class="btn" id="manual-login-btn" style="width:100%; margin-bottom:10px; background:#2563eb;">電腦版登入（分機＋密碼）</button>
+      <button class="btn" id="manual-login-btn" style="width:100%; margin-bottom:10px;">電腦版登入（分機＋密碼）</button>
       <button class="btn secondary" id="line-login-btn" style="width:100%;">使用 LINE 登入</button>
     </div>
   `;
@@ -753,6 +770,10 @@ async function loadAll() {
     state.members = data.members || [];
     state.memberData = data.memberData || {};
     state.loadError = null;
+    for (const id of state.members) {
+      if (!state.memberData[id]) state.memberData[id] = { displayName: id, quarterlyWFH: {}, overrides: {} };
+    }
+    markSynced();
   } catch (e) {
     console.error("load failed", e);
     state.members = [];
@@ -791,42 +812,111 @@ async function loadRemoteData() {
   return (data && data.members) ? data : { members: [], memberData: {} };
 }
 
-async function saveAll() {
+// ---- 存檔：只送出「這次自己改過的欄位」（Firebase 多路徑 PATCH），不再整份覆蓋，
+// 這樣多人同時登記時不會互相蓋掉對方的資料。----
+let cloudBaseline = null; // 最近一次與雲端同步的內容（JSON 字串）
+function snapshotLocal() {
+  return JSON.parse(JSON.stringify({ members: state.members, memberData: state.memberData }));
+}
+function markSynced() { cloudBaseline = snapshotLocal(); }
+const jsonEq = (a, b) => JSON.stringify(a === undefined ? null : a) === JSON.stringify(b === undefined ? null : b);
+
+function buildPatch(base, cur) {
+  const out = {};
+  const bm = (base && base.memberData) || {}, cm = cur.memberData || {};
+  for (const id of Object.keys(bm)) if (!(id in cm)) out["memberData/" + id] = null;
+  for (const id of Object.keys(cm)) {
+    const c = cm[id], b = bm[id];
+    if (!b) { out["memberData/" + id] = c; continue; }
+    const keys = new Set([...Object.keys(b), ...Object.keys(c)]);
+    for (const k of keys) {
+      if (k === "overrides" || k === "quarterlyWFH") {
+        const bo = b[k] || {}, co = c[k] || {};
+        for (const sk of new Set([...Object.keys(bo), ...Object.keys(co)])) {
+          if (!jsonEq(bo[sk], co[sk])) out[`memberData/${id}/${k}/${sk}`] = co[sk] === undefined ? null : co[sk];
+        }
+      } else if (!jsonEq(b[k], c[k])) {
+        out[`memberData/${id}/${k}`] = c[k] === undefined ? null : c[k];
+      }
+    }
+  }
+  return out;
+}
+
+async function patchFirebase(patch) {
+  const body = JSON.stringify(patch);
+  const send = () => fetchT(withAuth(FIREBASE_URL), { method: "PATCH", headers: { "Content-Type": "application/json" }, body }, 15000);
+  let res = await send();
+  if (res.status === 401) { await ensureFirebaseAuth(true); res = await send(); }
+  return res;
+}
+
+let saveChain = Promise.resolve();
+function saveAll() {
+  const run = saveChain.then(saveAllInner, saveAllInner);
+  saveChain = run.catch(() => {});
+  return run;
+}
+async function saveAllInner() {
   if (state.loadError) {
-    // We don't trust our in-memory copy of the data right now (the last read
-    // from the cloud failed), so refuse to write — writing could permanently
-    // overwrite good server-side data with an incomplete local snapshot.
+    // 目前記憶體裡的資料不可信（上次讀雲端失敗），不存檔以免覆蓋正確資料
     state.saveError = "剛剛讀取雲端資料時失敗，為了避免覆蓋掉正確的資料，這次操作暫時沒有存檔。請重新整理頁面，確認資料正常讀取後再試一次。";
     return;
   }
   try {
     await ensureFirebaseAuth();
-    const body = JSON.stringify({ members: state.members, memberData: state.memberData });
-    let res = await fetchT(withAuth(FIREBASE_URL), {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body
-    }, 15000);
-    if (res.status === 401) {
-      await ensureFirebaseAuth(true);
-      res = await fetchT(withAuth(FIREBASE_URL), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body
-      }, 15000);
+    const cur = snapshotLocal();
+    const base = cloudBaseline || { members: [], memberData: {} };
+    const patch = buildPatch(base, cur);
+    // 成員名單（新增/移除人員）：先讀雲端最新名單再合併，避免同時有人加入時被蓋掉
+    if (!jsonEq(base.members, cur.members)) {
+      const added = cur.members.filter(m => !base.members.includes(m));
+      const removed = base.members.filter(m => !cur.members.includes(m));
+      const remote = await loadRemoteData();
+      const merged = (remote.members || []).filter(m => !removed.includes(m));
+      for (const m of added) if (!merged.includes(m)) merged.push(m);
+      patch.members = merged;
+      state.members = merged;
+      cur.members = merged.slice();
     }
+    if (Object.keys(patch).length === 0) { state.saveError = null; return; }
+    const res = await patchFirebase(patch);
     if (!res.ok) {
       const errBody = await res.text().catch(() => "");
       console.error("save failed", res.status, errBody);
       state.saveError = `儲存失敗（狀態碼 ${res.status}），資料可能沒有真的存到雲端。請截圖這則訊息回報。`;
     } else {
       state.saveError = null;
+      cloudBaseline = cur;
     }
   } catch (e) {
     console.error("save failed", e);
     state.saveError = "儲存失敗（連線錯誤），資料可能沒有真的存到雲端：" + e.message;
   }
 }
+
+// 回到頁面 / 切回月曆時，重新抓雲端最新資料（看到別人剛登記的內容）
+let refreshing = false, lastRefresh = 0;
+async function refreshFromCloud(force) {
+  if (refreshing || !state.loaded || state.loadError) return;
+  if (!force && Date.now() - lastRefresh < 15000) return;
+  refreshing = true;
+  try {
+    const data = await loadRemoteData();
+    state.members = data.members || [];
+    state.memberData = data.memberData || {};
+    for (const id of state.members) {
+      if (!state.memberData[id]) state.memberData[id] = { displayName: id, quarterlyWFH: {}, overrides: {} };
+      if (!state.memberData[id].quarterlyWFH) state.memberData[id].quarterlyWFH = {};
+      if (!state.memberData[id].overrides) state.memberData[id].overrides = {};
+    }
+    markSynced();
+    lastRefresh = Date.now();
+    render();
+  } catch (e) { console.warn("refresh failed", e); }
+  finally { refreshing = false; }
+}
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") refreshFromCloud(false); });
 
 function getStatus(id, dateStr, weekday, dateObj) {
   if (HOLIDAYS[dateStr]) return null; // 國定假日不上班，不顯示任何個人登記
@@ -1677,7 +1767,7 @@ function bindEvents() {
     el.onclick = () => { state.recordsMonth = el.dataset.recmonth; render(); };
   });
   document.querySelectorAll(".tab").forEach(el => {
-    el.onclick = () => { state.tab = el.dataset.tab; state.selectedDay = null; state.formMsg = null; render(); };
+    el.onclick = () => { state.tab = el.dataset.tab; state.selectedDay = null; state.formMsg = null; render(); if (state.tab === 'calendar') refreshFromCloud(false); };
   });
   document.querySelectorAll("[data-view]").forEach(el => {
     el.onclick = () => {
